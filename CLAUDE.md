@@ -102,6 +102,14 @@ Storage is three things, only one of them a database: sample images are **files 
 - No liveness detection, no deepfake/GAN-face detection, no live government API integration. All named as future work.
 - Accuracy is quoted only against SIDTD, never invented.
 
+## Git and GitHub
+
+- Private repo: `Mohammad2460/fake-identity-document-screening`. Push with the `gh` CLI / `git push`.
+- Code work happens on branch `build`; `master` holds the planning docs.
+- **Push only reviewed work.** After a batch of tasks passes its task reviews, run the `code-review` skill over the branch, fix what matters, then push. Never push red tests.
+- Update `docs/PROGRESS.md` in the same push, so a teammate pulling the repo sees exactly where the build stands.
+- Never change the repo to public without the team lead saying so.
+
 ## Commands
 
 ```bash

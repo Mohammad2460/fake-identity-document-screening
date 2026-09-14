@@ -75,8 +75,8 @@ The computer vision. **T10 is the centerpiece — protect its time.**
 
 | Task | What | Status |
 |---|---|---|
-| T7 | Metadata — EXIF / PDF provenance | 🟡 subagent implementing |
-| T8 | Tamper — whole-image ELA, copy-move, noise | ⬜ |
+| T7 | Metadata — EXIF / PDF provenance | ✅ |
+| T8 | Tamper — whole-image ELA, copy-move, noise | ✅ |
 | T9 | OCR — text + **bounding boxes** (T10 depends on the boxes) | ⬜ |
 | T10 | **Field-level forensics** — which field was altered ⭐⭐ | ⬜ |
 | T11 | Face — portrait detection + selfie match | ⬜ |
@@ -201,6 +201,7 @@ Append one line per completed task: `hh:mm — T<n> done — note`
 2026-09-15 — Deps installed (opencv-python 5.0, face API present). T0-T6: 45/45 tests pass. Fixed plan bug: phone 1234567890 was not detected as fake.
 2026-09-15 — Subagent execution ledger: `.superpowers/sdd/2026-09-15-sih26188-document-screening/progress.md` (git-ignored; detailed per-task record).
 2026-09-15 — ✅ PHASE 0 + PHASE 1 COMPLETE. T0-T6 reviewed and approved. Demoable rules-core screener exists.
+2026-09-15 — T7 metadata ✅, T8 tamper ✅ (57/57 tests). Checkpoint: code-review skill + first push to private GitHub repo `fake-identity-document-screening`.
 ```
 
 ### Resume instructions for a new session
