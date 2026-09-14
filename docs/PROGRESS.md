@@ -9,6 +9,8 @@ Project rules: `CLAUDE.md` · Full plan with code: `docs/superpowers/plans/2026-
 
 ---
 
+**Non-coding teammates: read `docs/TEAM_GUIDE.md` instead of this file.**
+
 ## Hour 0 — before any code
 
 - [ ] Everyone reads `CLAUDE.md` (10 min)
@@ -203,6 +205,7 @@ Append one line per completed task: `hh:mm — T<n> done — note`
 2026-09-15 — ✅ PHASE 0 + PHASE 1 COMPLETE. T0-T6 reviewed and approved. Demoable rules-core screener exists.
 2026-09-15 — T7 metadata ✅, T8 tamper ✅ (57/57 tests). Checkpoint: code-review skill + first push to private GitHub repo `fake-identity-document-screening`.
 2026-09-15 — Code review found 9 bugs (worst: capitalised sanctioned names bypassed watchlist; bad OCR character crashed MRZ; composite check digit unchecked). All 9 fixed, re-reviewed, 72/72 tests. Pushed to GitHub.
+2026-09-15 — Added `docs/TEAM_GUIDE.md`: plain-language roles for teammates who don't use Claude.
 ```
 
 ### Resume instructions for a new session

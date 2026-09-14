@@ -35,6 +35,10 @@ OCR returns a bounding box per text field. We run ELA **inside each box separate
 
 **This is the centerpiece. Protect it. It is the demo, the innovation claim, and the best visual, all in one.**
 
+## Team
+
+Non-coding teammates follow `docs/TEAM_GUIDE.md` (plain-language, one page per role). Only the Lead uses Claude. Keep the guide accurate when features change — it holds the pitch, the judge Q&A answers and the honest limitations.
+
 ## Where we are
 
 `docs/PROGRESS.md` is the phase-by-phase runbook and the single source of truth. Read it before starting; update it after every task.
