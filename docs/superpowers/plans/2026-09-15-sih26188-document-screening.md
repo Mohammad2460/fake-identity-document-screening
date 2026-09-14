@@ -1,12 +1,37 @@
-# AI-Based Fake Identity & Document Screening System — Implementation Plan
+# SIH26188 — AI-Based Fake Identity & Document Screening System — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A locally-runnable screening service that ingests an identity document (image/PDF) plus claimed identity fields, runs eight independent forensic + rules engines, and returns an explainable 0-100 fraud risk score with per-signal reason codes and an analyst case report.
+**Problem statement (SIH26188, Ministry of Home Affairs), verbatim:**
 
-**Architecture:** One Python process. FastAPI serves both the JSON API and a static vanilla-JS frontend — no Node, no bundler, no CORS, no build step. Each detection concern is an isolated pure-ish module under `app/engines/` that consumes an input bundle and emits a list of `Signal` objects. A single `pipeline.py` fans out to every engine, collects signals, and `scoring.py` folds them into a weighted risk score and band. Engines degrade gracefully: any engine that raises returns an `ENGINE_ERROR` signal rather than failing the request, so the demo can never hard-crash on a judge's weird upload.
+> Identity documents such as passports, visas etc. can be forged or tampered. Manual verification is time-consuming and can lead to human errors. Forged documents can contain altered photographs, names, DOBs, or visa stamps. High volumes of documents make manual inspection inefficient.
 
-**Tech Stack:** Python 3.13, FastAPI, Uvicorn, OpenCV (contrib), Pillow, RapidOCR (ONNX, no system deps), pypdf, RapidFuzz, SQLite (stdlib `sqlite3`), pytest. Frontend: HTML + Tailwind CDN + vanilla JS.
+**Goal:** A locally-runnable screening service that ingests a passport or visa image plus claimed applicant details, runs nine independent forensic and rules engines, and returns an explainable 0-100 fraud risk score that names **which field was tampered** and shows it boxed on an annotated evidence image.
+
+**Architecture:** One Python process. FastAPI serves both the JSON API and a static vanilla-JS frontend — no Node, no bundler, no build step, no CORS. Each detection concern is an isolated module under `app/engines/` consuming an input bundle and emitting `list[Signal]`. `app/pipeline.py` fans out to every engine; `app/scoring.py` folds signals into a weighted score and band. Engines degrade gracefully: any engine that raises returns an `ENGINE_ERROR` signal rather than failing the request, so the demo can never hard-crash on a judge's weird upload.
+
+**Tech Stack:** Python 3.13, FastAPI, Uvicorn, OpenCV (contrib), Pillow, RapidOCR (ONNX — PaddleOCR's models without PaddlePaddle), pypdf, RapidFuzz, SQLite (stdlib), pytest. Frontend: HTML + Tailwind CDN + vanilla JS.
+
+---
+
+## The four attack types named in the PS, and who catches each
+
+| PS says | Owning engine | Method |
+|---|---|---|
+| altered **photographs** | `fieldforensics` + `face` | per-region ELA on the portrait; selfie-to-portrait biometric match |
+| altered **names** | `mrz` + `ocr` + `fieldforensics` | name vs MRZ encoding; name vs printed text; per-field ELA |
+| altered **DOBs** | `mrz` + `fieldforensics` | ICAO check digit on the DOB; per-field ELA |
+| forged **visa stamps** | `fieldforensics` | per-region ELA on the stamp area |
+| **high volumes** | `batch` | CSV bulk screening + dashboard |
+
+## The differentiator — field-level forensics (Task 10)
+
+Everyone else's project outputs *"this document is 78% fake."*
+Ours outputs **"the DOB field was altered — here it is, circled in red."**
+
+OCR returns a bounding box per text field. We run ELA **inside each box separately** and find the box whose compression residual is a statistical outlier against its neighbours. That field was retyped after the document was issued. The same method runs on the portrait region and the visa stamp region.
+
+**This is the centerpiece: the innovation claim, the demo moment, and the best visual, in one engine. Protect its schedule.**
 
 ---
 
@@ -14,49 +39,65 @@
 
 Every task's requirements implicitly include this section.
 
-- **Python 3.13.** Verified working. Use `.venv` at repo root.
-- **Zero system-level dependencies.** No tesseract, no dlib, no cmake, no brew installs. Every dependency must install via `pip install` alone. This is non-negotiable — a teammate's laptop failing `brew install` at hour 20 loses the hackathon.
+- **Python 3.13.** Verified working. `.venv` at repo root.
+- **Scope is passports and visas.** Border control / Bureau of Immigration. Not Aadhaar, not PAN, not domestic Indian ID. A feature that does not help screen a passport or visa is out of scope.
+- **Zero system-level dependencies.** Everything installs via `pip` alone. No PaddlePaddle, no dlib, no tesseract, no cmake, no MySQL server. A teammate's laptop failing an install at hour 20 loses the hackathon.
 - **Pinned dependency set** (verified to resolve together on 3.13):
-  `fastapi`, `uvicorn`, `python-multipart`, `pillow`, `opencv-contrib-python`, `rapidocr-onnxruntime`, `pypdf`, `rapidfuzz`, `pytest`
-- **Offline-capable.** No network call on the request path. No LLM API, no external watchlist API. Judging-day wifi must be irrelevant. Model files (ONNX) are downloaded once during setup and committed or cached under `models/`.
+  `fastapi`, `uvicorn`, `python-multipart`, `pillow`, `opencv-contrib-python`, `rapidocr-onnxruntime`, `pypdf`, `rapidfuzz`, `pytest`, `httpx`
+- **Offline-capable.** No network on the request path. No LLM API, no government API. Judging-day wifi must be irrelevant — we switch it off on stage deliberately. ONNX models download once during setup.
+- **No real identity documents, ever.** Not scraped, not a teammate's, not your own. Demo data comes from `scripts/make_samples.py`; accuracy numbers come from the SIDTD dataset (1,900 bona fide + 1,900 labelled forgeries, CC BY-SA 3.0). A real document in a git repo is a permanent leak and a judging liability.
 - **Every engine degrades, never crashes.** An engine raising an exception must be caught by the pipeline and converted into a signal. A malformed upload returns a scored result, not a 500.
-- **Every signal is explainable.** No signal may contribute to the score without a human-readable `message` naming what was checked and what was found. "Because the model said so" scores zero points with judges.
+- **Every signal is explainable.** No signal may contribute to the score without a human-readable `message` naming what was checked and what was found. Explainability *is* the product — both the PS and our pitch say so.
 - **Risk bands:** `0-29 = CLEAR (green)`, `30-64 = REVIEW (amber)`, `65-100 = REJECT (red)`.
-- **Synthetic data only.** Never use a real person's ID document, ever, including your own. All samples are generated by `scripts/make_samples.py`. Real PII in a demo repo is both an ethics problem and a disqualification risk.
-- **Commit after every task.** Small commits. The repo history is itself evidence of process for judges.
+- **Commit after every task.** The history is evidence of process for judges.
 
 ---
 
 ## Team Roles (6 nominal, built to survive 2 working)
 
-The plan assumes **the Lead + Claude does the critical path alone**. Every other role is additive — if that person vanishes, the demo still works. This is deliberate. Do not put anything on the critical path that depends on a teammate showing up.
+The plan assumes **the Lead plus Claude carries the critical path alone**. Every other role is additive — if that person vanishes, the demo still works. Nothing on the critical path may depend on a teammate showing up.
 
 | # | Role | Owns | Critical path? |
 |---|------|------|----------------|
-| 1 | **Lead / Driver** | Runs Claude, executes Tasks 0-13, owns git, owns the demo laptop | **YES — the whole build** |
-| 2 | **Forensics Support** | Task 14 sample forgeries, adversarial testing, tries to break the scorer | No |
-| 3 | **Frontend Polish** | Task 13 visual pass, colors, layout, responsive check | No (T13 ships functional without them) |
-| 4 | **Data / QA** | Watchlist CSV, test identity fixtures, runs the full test matrix before demo | No |
-| 5 | **Pitch / Docs** | Slides, 90-second script, README, judge Q&A prep sheet | No (but high score impact) |
-| 6 | **Floater** | Backup demo laptop, screen recording, timekeeping | No |
+| 1 | **Lead / Driver** | Runs Claude, executes T0-T15, git, demo laptop | **YES — the whole build** |
+| 2 | **Forensics Support** | T16 samples, adversarial testing, threshold calibration | No |
+| 3 | **Frontend Polish** | T15 visual pass | No |
+| 4 | **Data / QA** | SIDTD download + accuracy run, watchlist, test matrix | No |
+| 5 | **Pitch / Docs** | Slides, 4-minute script, README, judge Q&A | No (highest non-code score impact) |
+| 6 | **Floater** | Backup laptop, screen recording, timekeeping | No |
 
-**If only 2-3 people show up:** Lead takes 1+2, second person takes 5 (pitch is the highest-ROI non-code work), third takes 3+4.
+**If only 2-3 show up:** Lead takes 1+2, second takes 5, third takes 3+4.
 
 ---
 
-## Phase Timeline (24-36h)
+## Phase Timeline (36h)
 
 | Phase | Hours | Tasks | Exit gate |
 |-------|-------|-------|-----------|
-| **0 — Foundation** | 0-2 | T0, T1 | `uvicorn` boots, `/health` returns 200, all deps import, pytest runs |
-| **1 — Rules core** | 2-8 | T2-T6 | MRZ, identity, watchlist, scoring, storage all green under pytest. **This alone is a demoable product.** |
-| **2 — Forensics** | 8-16 | T7-T10 | Metadata, tamper, OCR, face engines emit real signals on sample images |
-| **3 — Surface** | 16-22 | T11-T13 | Upload a doc in the browser, see a scored verdict |
-| **4 — Demo assets** | 22-28 | T14-T15 | Six sample cases spanning CLEAR/REVIEW/REJECT, case report export |
-| **5 — Harden & rehearse** | 28-34 | T16 | Full dry run twice, video backup recorded |
-| **Buffer** | 34-36 | — | Do nothing new. Sleep. Fix only what broke in rehearsal. |
+| **0 — Foundation** | 0-2 | T0, T1 | `uvicorn` boots, `/health` 200, deps import, pytest runs |
+| **1 — Rules core** | 2-8 | T2-T6 | MRZ, identity, watchlist, scoring, storage green. **Demoable product on its own.** |
+| **2 — Forensics** | 8-18 | T7-T11 | Field-level forensics localizes a tampered DOB on a real sample |
+| **3 — Surface** | 18-24 | T12-T15 | Upload in the browser, see a verdict with the bad field boxed |
+| **4 — Demo assets** | 24-29 | T16, T17 | Seven samples spanning CLEAR/REVIEW/REJECT, thresholds calibrated |
+| **5 — Harden & rehearse** | 29-34 | T18 | Cold start on another laptop, two dress rehearsals, video backup |
+| **Buffer** | 34-36 | — | Build nothing new. Fix only what rehearsal broke. Sleep. |
 
-**Hard rule:** at hour 22, whatever is not working gets cut, not fixed. A polished 5-engine demo beats a broken 8-engine one.
+**Hard rule:** at hour 24, whatever is not working gets cut, not fixed. A polished 6-engine demo beats a broken 9-engine one.
+
+---
+
+## Data
+
+Three sources, all synthetic. Storage is three things, only one of them a database.
+
+| What | Where | Purpose |
+|---|---|---|
+| Demo samples | `data/samples/*.jpg` — **files on disk**, generated by `scripts/make_samples.py` | The seven scripted demo cases. Full control over what each triggers. |
+| Watchlist | `data/watchlist.csv` — **one CSV** | Synthetic sanctions/PEP names to screen against |
+| Case history | `cases.db` — **SQLite**, one row per screening | Cross-document and duplicate detection, plus the dashboard |
+| Accuracy | **SIDTD** (external, downloaded by Data/QA) | One real, quotable detection rate. Never invent a number. |
+
+**We need zero genuine documents.** Every check is self-contained: MRZ check digits prove the document against itself, and field-level ELA compares each field against the other fields on the same page. This is also why the system runs fully offline with no government API.
 
 ---
 
@@ -64,38 +105,43 @@ The plan assumes **the Lead + Claude does the critical path alone**. Every other
 
 ```
 app/
-  main.py            FastAPI app: routes, static mount, error handling
-  config.py          Signal weights, risk band thresholds, tunables
-  models.py          Signal, ScreeningInput, ScreeningResult dataclasses
-  db.py              SQLite schema + case persistence helpers
-  pipeline.py        Fan-out orchestrator; catches per-engine failures
-  scoring.py         Weighted signal -> score -> band + top reasons
-  report.py          JSON + printable HTML case report
+  main.py              FastAPI app: routes, static mount, error handling
+  config.py            Signal weights, band thresholds, tunables
+  models.py            Signal, ScreeningInput, ScreeningResult dataclasses
+  db.py                SQLite schema + case persistence
+  pipeline.py          Fan-out orchestrator; catches per-engine failures
+  scoring.py           Weighted signal -> score -> band + top reasons
+  report.py            Printable analyst case report (optional, T19)
+  annotate.py          Draws the evidence image with tampered regions boxed
   engines/
-    __init__.py      ENGINES registry
-    mrz.py           MRZ line parse + ICAO 9303 check digits
-    identity.py      Aadhaar/PAN/email/phone/DOB/name rules, synthetic heuristics
-    watchlist.py     Fuzzy sanctions/PEP name match
-    velocity.py      Cross-submission duplicate & burst detection
-    metadata.py      EXIF + PDF producer/date forensics
-    tamper.py        ELA, copy-move (ORB), noise inconsistency
-    ocr.py           RapidOCR text extraction + typed-vs-printed cross-check
-    face.py          Face detect (YuNet), portrait sanity, selfie<->doc match (SFace)
+    __init__.py
+    mrz.py             MRZ parse + ICAO 9303 check digits
+    identity.py        Synthetic-identity heuristics on claimed fields
+    watchlist.py       Fuzzy sanctions/PEP name match
+    velocity.py        Cross-submission duplicate & burst detection
+    metadata.py        EXIF + PDF provenance forensics
+    tamper.py          Whole-image ELA, copy-move (ORB), noise inconsistency
+    ocr.py             RapidOCR text + bounding boxes, printed-vs-typed check
+    fieldforensics.py  Per-region ELA -> which field was altered  ⭐
+    face.py            Portrait detection (YuNet), selfie match (SFace)
+    crossdoc.py        Passport vs visa vs prior submissions
 static/
-  index.html         Single page UI
-  app.js             Upload, poll, render verdict
-  styles.css         Small overrides on top of Tailwind CDN
+  index.html           Single page UI
+  app.js               Upload, render verdict, show evidence image
+  styles.css           Small overrides on Tailwind CDN
 data/
-  watchlist.csv      Synthetic sanctions list
-  samples/           Generated sample cases (gitignored except manifest)
-models/              YuNet + SFace ONNX (downloaded by script)
+  watchlist.csv
+  samples/             Generated sample cases
+  evidence/            Annotated evidence images (generated per case)
+models/                YuNet + SFace ONNX (downloaded by script)
 scripts/
-  make_samples.py    Generate clean + forged sample documents
-  download_models.py Fetch face ONNX models
-tests/               pytest, one file per engine
+  make_samples.py      Generate clean + forged passports and visas
+  download_models.py   Fetch face ONNX models
+  batch_screen.py      Bulk CSV screening (T17)
+tests/                 pytest, one file per engine
 ```
 
-**Decomposition rule:** one engine per file, one responsibility per engine, every engine has the same signature. This is what lets tasks be worked in any order and lets a weak engine be cut at hour 22 by deleting one line from the registry.
+**Decomposition rule:** one engine per file, one responsibility per engine, identical signature across engines. This is what lets tasks be worked in any order and lets a weak engine be cut at hour 24 by setting one weight to `0.0`.
 
 ---
 
@@ -214,9 +260,9 @@ git commit -m "feat: project skeleton with health endpoint and verified deps"
 - Consumes: nothing
 - Produces:
   - `Signal(code: str, engine: str, severity: str, message: str, weight_override: float | None = None, evidence: dict | None = None)` — `severity` is one of `"info" | "low" | "medium" | "high" | "critical"`
-  - `ScreeningInput(doc_path: str | None, selfie_path: str | None, claimed: dict)`
-  - `ScreeningResult(score: int, band: str, signals: list[Signal], engine_errors: list[str], case_id: str)`
-  - `config.SEVERITY_POINTS: dict[str, float]`, `config.ENGINE_WEIGHTS: dict[str, float]`, `config.BANDS`
+  - `ScreeningInput(claimed: dict, doc_path: str | None, visa_path: str | None, selfie_path: str | None)`
+  - `ScreeningResult(case_id: str, score: int, band: str, signals: list[Signal], engine_errors: list[str], evidence_path: str | None)`
+  - `config.SEVERITY_POINTS: dict[str, float]`, `config.ENGINE_WEIGHTS: dict[str, float]`, `config.BANDS`, `config.EVIDENCE_DIR`
 
 **Design note:** severity carries the points, engine weight scales them. This means an engine can be tuned or cut without touching any signal definition — critical at hour 22 when you need to silence a noisy engine in one line.
 
@@ -272,6 +318,7 @@ class Signal:
 class ScreeningInput:
     claimed: dict = field(default_factory=dict)
     doc_path: str | None = None
+    visa_path: str | None = None
     selfie_path: str | None = None
 
 @dataclass
@@ -281,6 +328,7 @@ class ScreeningResult:
     band: str
     signals: list[Signal] = field(default_factory=list)
     engine_errors: list[str] = field(default_factory=list)
+    evidence_path: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -288,6 +336,7 @@ class ScreeningResult:
             "score": self.score,
             "band": self.band,
             "engine_errors": self.engine_errors,
+            "evidence_path": self.evidence_path,
             "signals": [
                 {"code": s.code, "engine": s.engine, "severity": s.severity,
                  "message": s.message, "evidence": s.evidence}
@@ -310,6 +359,7 @@ SEVERITY_POINTS = {
 # Scales every signal an engine emits. Set to 0.0 to cut an engine instantly.
 ENGINE_WEIGHTS = {
     "mrz": 1.0,
+    "fieldforensics": 1.0,   # the centerpiece
     "identity": 1.0,
     "watchlist": 1.0,
     "velocity": 0.8,
@@ -317,12 +367,14 @@ ENGINE_WEIGHTS = {
     "tamper": 1.0,
     "ocr": 0.9,
     "face": 1.0,
+    "crossdoc": 1.0,
 }
 
 BANDS = [(30, "CLEAR"), (65, "REVIEW"), (101, "REJECT")]
 
 MAX_SCORE = 100
 UPLOAD_DIR = "data/uploads"
+EVIDENCE_DIR = "data/evidence"
 DB_PATH = "cases.db"
 ```
 
@@ -531,7 +583,9 @@ git commit -m "feat: MRZ engine with ICAO 9303 check digit validation"
 
 ---
 
-## Task 3: Identity engine — national ID checksums and synthetic-identity heuristics
+## Task 3: Identity engine — synthetic-identity heuristics
+
+**Scope note:** the PS title is "Fake **Identity** & Document Screening". This engine screens the *claimed person*, not the document — a fabricated applicant who has never existed. Passport/visa context, so no Aadhaar or PAN validators.
 
 **Files:**
 - Create: `app/engines/identity.py`, `tests/test_identity.py`
@@ -539,20 +593,8 @@ git commit -m "feat: MRZ engine with ICAO 9303 check digit validation"
 **Interfaces:**
 - Consumes: `Signal`
 - Produces:
-  - `verhoeff_valid(number: str) -> bool`
-  - `verhoeff_check_digit(payload: str) -> int`
-  - `aadhaar_valid(number: str) -> bool`
-  - `pan_valid(pan: str) -> bool`
-  - `run(claimed: dict) -> list[Signal]` — `claimed` keys: `full_name, dob, aadhaar, pan, email, phone, address`
-
-**Reference — Verhoeff:** the checksum used by Aadhaar. Three lookup tables: `d` (dihedral group D5 multiplication), `p` (permutation), `inv` (inverse). Validation folds every digit right-to-left through `d[c][p[i % 8][digit]]` and passes when the accumulator lands on 0.
-
-**Verified vectors** (computed and confirmed — do not change):
-- `verhoeff_check_digit("236") == 3`
-- `verhoeff_valid("234567890124") is True`
-- `verhoeff_valid("234567890123") is False`
-
-**Critical trap — read this:** `verhoeff_valid("999999999999")` returns **True**. Repeated-digit numbers satisfy Verhoeff. A checksum-only Aadhaar validator therefore accepts `000000000000` and `111111111111`, which are exactly the numbers a lazy fraudster types. You must add an explicit repdigit rule on top of the checksum. This one detail is worth calling out to judges — it shows you tested your own validator rather than trusting it.
+  - `passport_number_plausible(num: str) -> bool`
+  - `run(claimed: dict) -> list[Signal]` — `claimed` keys: `full_name, dob, passport_no, nationality, email, phone, address`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -560,37 +602,18 @@ git commit -m "feat: MRZ engine with ICAO 9303 check digit validation"
 # tests/test_identity.py
 from app.engines import identity
 
-def test_verhoeff_check_digit_known_vector():
-    assert identity.verhoeff_check_digit("236") == 3
-
-def test_verhoeff_accepts_valid_and_rejects_tampered():
-    assert identity.verhoeff_valid("234567890124") is True
-    assert identity.verhoeff_valid("234567890123") is False
-
-def test_aadhaar_rejects_repeated_digits_despite_valid_checksum():
-    # This number passes raw Verhoeff but must never be accepted as an Aadhaar.
-    assert identity.verhoeff_valid("999999999999") is True
-    assert identity.aadhaar_valid("999999999999") is False
-
-def test_aadhaar_rejects_leading_zero_or_one():
-    assert identity.aadhaar_valid("034567890124") is False
-
-def test_pan_format():
-    assert identity.pan_valid("ABCPK1234F") is True
-    assert identity.pan_valid("ABC1K1234F") is False
-    assert identity.pan_valid("ABCPK1234") is False
+def test_passport_number_format():
+    assert identity.passport_number_plausible("L898902C3") is True
+    assert identity.passport_number_plausible("AB1") is False
+    assert identity.passport_number_plausible("!!!!###") is False
 
 def test_clean_identity_produces_no_high_signals():
     signals = identity.run({
         "full_name": "Anna Maria Eriksson", "dob": "1974-08-12",
-        "aadhaar": "234567890124", "pan": "ABCPK1234F",
+        "passport_no": "L898902C3", "nationality": "UTO",
         "email": "anna.eriksson@gmail.com", "phone": "9876543210",
     })
     assert not [s for s in signals if s.severity in ("high", "critical")]
-
-def test_bad_aadhaar_flagged():
-    signals = identity.run({"aadhaar": "234567890123"})
-    assert "ID_AADHAAR_CHECKSUM_FAIL" in [s.code for s in signals]
 
 def test_disposable_email_flagged():
     signals = identity.run({"email": "throwaway@mailinator.com"})
@@ -600,17 +623,32 @@ def test_implausible_dob_flagged():
     assert "ID_DOB_IMPLAUSIBLE" in [s.code for s in identity.run({"dob": "2025-01-01"})]
     assert "ID_DOB_IMPLAUSIBLE" in [s.code for s in identity.run({"dob": "1890-01-01"})]
 
+def test_unparseable_dob_flagged():
+    assert "ID_DOB_UNPARSEABLE" in [s.code for s in identity.run({"dob": "not a date"})]
+
 def test_keyboard_pattern_name_flagged():
     signals = identity.run({"full_name": "Asdf Qwerty"})
     assert "ID_NAME_SUSPICIOUS" in [s.code for s in signals]
+
+def test_single_token_name_is_low_severity():
+    signals = identity.run({"full_name": "Madonna"})
+    assert "ID_NAME_SINGLE_TOKEN" in [s.code for s in signals]
 
 def test_sequential_phone_flagged():
     signals = identity.run({"phone": "1234567890"})
     assert "ID_PHONE_SEQUENTIAL" in [s.code for s in signals]
 
+def test_repeated_digit_phone_flagged():
+    signals = identity.run({"phone": "9999999999"})
+    assert "ID_PHONE_SEQUENTIAL" in [s.code for s in signals]
+
 def test_email_name_divergence_flagged():
     signals = identity.run({"full_name": "Anna Eriksson", "email": "xk92mzq7@gmail.com"})
     assert "ID_EMAIL_NAME_DIVERGENCE" in [s.code for s in signals]
+
+def test_malformed_passport_number_flagged():
+    signals = identity.run({"passport_no": "!!"})
+    assert "ID_PASSPORT_FORMAT_ODD" in [s.code for s in signals]
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -621,52 +659,10 @@ Expected: FAIL — `ImportError: cannot import name 'identity'`
 - [ ] **Step 3: Write `app/engines/identity.py`**
 
 ```python
-"""Claimed-identity field validation and synthetic-identity heuristics."""
+"""Screens the claimed person for signs of a fabricated identity."""
 import re
-from datetime import date
+from datetime import date, datetime
 from app.models import Signal
-
-_D = [
-    [0,1,2,3,4,5,6,7,8,9],[1,2,3,4,0,6,7,8,9,5],[2,3,4,0,1,7,8,9,5,6],
-    [3,4,0,1,2,8,9,5,6,7],[4,0,1,2,3,9,5,6,7,8],[5,9,8,7,6,0,4,3,2,1],
-    [6,5,9,8,7,1,0,4,3,2],[7,6,5,9,8,2,1,0,4,3],[8,7,6,5,9,3,2,1,0,4],
-    [9,8,7,6,5,4,3,2,1,0],
-]
-_P = [
-    [0,1,2,3,4,5,6,7,8,9],[1,5,7,6,2,8,3,0,9,4],[5,8,0,3,7,9,6,1,4,2],
-    [8,9,1,6,0,4,3,5,2,7],[9,4,5,3,1,2,6,8,7,0],[4,2,8,6,5,7,3,9,0,1],
-    [2,7,9,3,8,0,6,4,1,5],[7,0,4,6,9,1,3,2,5,8],
-]
-_INV = [0,4,3,2,1,5,6,7,8,9]
-
-def verhoeff_valid(number: str) -> bool:
-    if not number.isdigit():
-        return False
-    c = 0
-    for i, ch in enumerate(reversed(number)):
-        c = _D[c][_P[i % 8][int(ch)]]
-    return c == 0
-
-def verhoeff_check_digit(payload: str) -> int:
-    c = 0
-    for i, ch in enumerate(reversed(payload)):
-        c = _D[c][_P[(i + 1) % 8][int(ch)]]
-    return _INV[c]
-
-def aadhaar_valid(number: str) -> bool:
-    n = re.sub(r"\s+", "", number or "")
-    if len(n) != 12 or not n.isdigit():
-        return False
-    if n[0] in "01":              # Aadhaar never starts 0 or 1
-        return False
-    if len(set(n)) == 1:          # 999999999999 passes Verhoeff. Reject it.
-        return False
-    return verhoeff_valid(n)
-
-_PAN_RE = re.compile(r"^[A-Z]{3}[ABCFGHLJPTK][A-Z]\d{4}[A-Z]$")
-
-def pan_valid(pan: str) -> bool:
-    return bool(_PAN_RE.match((pan or "").strip().upper()))
 
 DISPOSABLE_DOMAINS = {
     "mailinator.com", "guerrillamail.com", "10minutemail.com", "tempmail.com",
@@ -675,6 +671,10 @@ DISPOSABLE_DOMAINS = {
 }
 
 _KEYBOARD_RUNS = ("qwerty", "asdf", "zxcv", "qazwsx", "hjkl", "wasd", "poiuy")
+_PASSPORT_RE = re.compile(r"^[A-Z0-9<]{6,12}$")
+
+def passport_number_plausible(num: str) -> bool:
+    return bool(_PASSPORT_RE.match((num or "").strip().upper()))
 
 def _looks_like_keyboard_mash(text: str) -> bool:
     t = re.sub(r"[^a-z]", "", (text or "").lower())
@@ -690,7 +690,6 @@ def _is_sequential(digits: str) -> bool:
 def _parse_dob(dob: str) -> date | None:
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
         try:
-            from datetime import datetime
             return datetime.strptime(dob.strip(), fmt).date()
         except (ValueError, AttributeError):
             continue
@@ -701,28 +700,15 @@ def run(claimed: dict) -> list[Signal]:
     name = (claimed.get("full_name") or "").strip()
     email = (claimed.get("email") or "").strip().lower()
     phone = re.sub(r"\D", "", claimed.get("phone") or "")
-    aadhaar = (claimed.get("aadhaar") or "").strip()
-    pan = (claimed.get("pan") or "").strip()
+    passport_no = (claimed.get("passport_no") or "").strip()
     dob = (claimed.get("dob") or "").strip()
 
-    if aadhaar:
-        if not aadhaar_valid(aadhaar):
-            reason = ("repeated digits" if len(set(re.sub(r"\s", "", aadhaar))) == 1
-                      else "invalid Verhoeff check digit")
-            s.append(Signal(
-                code="ID_AADHAAR_CHECKSUM_FAIL", engine="identity", severity="high",
-                message=f"Aadhaar number failed validation ({reason}). Not a issuable number.",
-                evidence={"aadhaar_masked": "XXXX-XXXX-" + aadhaar[-4:]},
-            ))
-        else:
-            s.append(Signal(code="ID_AADHAAR_VALID", engine="identity", severity="info",
-                            message="Aadhaar number passes Verhoeff checksum and format rules."))
-
-    if pan and not pan_valid(pan):
+    if passport_no and not passport_number_plausible(passport_no):
         s.append(Signal(
-            code="ID_PAN_FORMAT_FAIL", engine="identity", severity="medium",
-            message=f"PAN {pan!r} does not match the mandated AAAPA9999A structure.",
-            evidence={"pan": pan},
+            code="ID_PASSPORT_FORMAT_ODD", engine="identity", severity="medium",
+            message=f"Passport number {passport_no!r} does not match the 6-12 "
+                    f"alphanumeric structure used by ICAO travel documents.",
+            evidence={"passport_no": passport_no},
         ))
 
     if email:
@@ -737,8 +723,7 @@ def run(claimed: dict) -> list[Signal]:
         digits = sum(c.isdigit() for c in local)
         if name and len(local) >= 6:
             parts = [p.lower() for p in re.split(r"\s+", name) if len(p) > 2]
-            overlaps = any(p[:4] in local for p in parts)
-            if not overlaps and digits >= 3:
+            if not any(p[:4] in local for p in parts) and digits >= 3:
                 s.append(Signal(
                     code="ID_EMAIL_NAME_DIVERGENCE", engine="identity", severity="medium",
                     message=(f"Email local-part {local!r} shares nothing with the claimed "
@@ -787,13 +772,13 @@ def run(claimed: dict) -> list[Signal]:
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `./.venv/bin/pytest tests/test_identity.py -v`
-Expected: PASS, 12 passed
+Expected: PASS, 11 passed
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add app/engines/identity.py tests/test_identity.py
-git commit -m "feat: identity engine with Verhoeff/PAN validation and synthetic heuristics"
+git commit -m "feat: synthetic-identity heuristics engine"
 ```
 
 ---
@@ -1078,11 +1063,11 @@ git commit -m "feat: decaying weighted risk scoring with critical floor"
 - Consumes: `Signal`, stdlib `sqlite3`
 - Produces:
   - `db.init_db(path) -> None`, `db.save_case(path, case_id, claimed, score, band, signals) -> None`
-  - `db.find_prior(path, *, aadhaar=None, email=None, phone=None, doc_hash=None) -> list[dict]`
+  - `db.find_prior(path, *, passport_no=None, email=None, phone=None, doc_hash=None) -> list[dict]`
   - `db.recent_count(path, minutes=10) -> int`
   - `velocity.run(claimed: dict, doc_hash: str | None, db_path: str) -> list[Signal]`
 
-**Why this engine wins points:** every other engine looks at one submission in isolation. This one catches the pattern no single-document check can — the same Aadhaar submitted under three different names, or twenty applications in four minutes. Judges recognise it as the difference between a toy checker and a screening *system*.
+**Why this engine wins points:** every other engine looks at one submission in isolation. This one catches the pattern no single-document check can — the same passport number submitted under three different names, or twenty applications in four minutes. Judges recognise it as the difference between a toy checker and a screening *system*.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1099,19 +1084,19 @@ def dbfile(tmp_path):
     return p
 
 def test_first_submission_is_clean(dbfile):
-    signals = velocity.run({"aadhaar": "234567890124", "email": "a@b.com"}, None, dbfile)
+    signals = velocity.run({"passport_no": "L898902C3", "email": "a@b.com"}, None, dbfile)
     assert [s.severity for s in signals] == ["info"]
 
 def test_same_id_different_name_is_flagged(dbfile):
-    db.save_case(dbfile, "c1", {"aadhaar": "234567890124", "full_name": "Anna Eriksson"},
+    db.save_case(dbfile, "c1", {"passport_no": "L898902C3", "full_name": "Anna Eriksson"},
                  10, "CLEAR", [])
-    signals = velocity.run({"aadhaar": "234567890124", "full_name": "John Smith"}, None, dbfile)
+    signals = velocity.run({"passport_no": "L898902C3", "full_name": "John Smith"}, None, dbfile)
     assert "VEL_ID_REUSED_NEW_NAME" in [s.code for s in signals]
 
 def test_same_id_same_name_is_only_informational(dbfile):
-    db.save_case(dbfile, "c1", {"aadhaar": "234567890124", "full_name": "Anna Eriksson"},
+    db.save_case(dbfile, "c1", {"passport_no": "L898902C3", "full_name": "Anna Eriksson"},
                  10, "CLEAR", [])
-    signals = velocity.run({"aadhaar": "234567890124", "full_name": "Anna Eriksson"}, None, dbfile)
+    signals = velocity.run({"passport_no": "L898902C3", "full_name": "Anna Eriksson"}, None, dbfile)
     assert "VEL_ID_REUSED_NEW_NAME" not in [s.code for s in signals]
 
 def test_identical_document_hash_is_flagged(dbfile):
@@ -1144,8 +1129,8 @@ CREATE TABLE IF NOT EXISTS cases (
     case_id    TEXT PRIMARY KEY,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     full_name  TEXT,
-    aadhaar    TEXT,
-    pan        TEXT,
+    passport_no TEXT,
+    nationality TEXT,
     email      TEXT,
     phone      TEXT,
     doc_hash   TEXT,
@@ -1153,7 +1138,7 @@ CREATE TABLE IF NOT EXISTS cases (
     band       TEXT,
     payload    TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_aadhaar  ON cases(aadhaar);
+CREATE INDEX IF NOT EXISTS idx_passport ON cases(passport_no);
 CREATE INDEX IF NOT EXISTS idx_email    ON cases(email);
 CREATE INDEX IF NOT EXISTS idx_doc_hash ON cases(doc_hash);
 """
@@ -1181,16 +1166,16 @@ def save_case(path, case_id, claimed, score, band, signals, doc_hash=None) -> No
     with _conn(path) as con:
         con.execute(
             "INSERT OR REPLACE INTO cases "
-            "(case_id, full_name, aadhaar, pan, email, phone, doc_hash, score, band, payload) "
+            "(case_id, full_name, passport_no, nationality, email, phone, doc_hash, score, band, payload) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (case_id, claimed.get("full_name"), claimed.get("aadhaar"),
-             claimed.get("pan"), claimed.get("email"), claimed.get("phone"),
+            (case_id, claimed.get("full_name"), claimed.get("passport_no"),
+             claimed.get("nationality"), claimed.get("email"), claimed.get("phone"),
              doc_hash, score, band, payload),
         )
 
-def find_prior(path, *, aadhaar=None, email=None, phone=None, doc_hash=None) -> list[dict]:
+def find_prior(path, *, passport_no=None, email=None, phone=None, doc_hash=None) -> list[dict]:
     clauses, params = [], []
-    for col, val in (("aadhaar", aadhaar), ("email", email),
+    for col, val in (("passport_no", passport_no), ("email", email),
                      ("phone", phone), ("doc_hash", doc_hash)):
         if val:
             clauses.append(f"{col} = ?")
@@ -1232,7 +1217,7 @@ def run(claimed: dict, doc_hash: str | None, db_path: str) -> list[Signal]:
 
     prior = db.find_prior(
         db_path,
-        aadhaar=claimed.get("aadhaar"),
+        passport_no=claimed.get("passport_no"),
         email=claimed.get("email"),
         phone=claimed.get("phone"),
         doc_hash=doc_hash,
@@ -1249,16 +1234,16 @@ def run(claimed: dict, doc_hash: str | None, db_path: str) -> list[Signal]:
                 evidence={"prior_case": dupes[0]["case_id"]},
             ))
 
-    if claimed.get("aadhaar"):
+    if claimed.get("passport_no"):
         conflicting = {
             p["full_name"] for p in prior
-            if p["aadhaar"] == claimed["aadhaar"] and p["full_name"]
+            if p["passport_no"] == claimed["passport_no"] and p["full_name"]
             and p["full_name"].strip().lower() != name
         }
         if conflicting:
             signals.append(Signal(
                 code="VEL_ID_REUSED_NEW_NAME", engine="velocity", severity="critical",
-                message=(f"The same national ID has previously been submitted under "
+                message=(f"The same passport number has previously been submitted under "
                          f"{len(conflicting)} different name(s): "
                          f"{', '.join(sorted(conflicting))}."),
                 evidence={"conflicting_names": sorted(conflicting)},
@@ -1715,7 +1700,7 @@ for p in sys.argv[1:]:
 " data/samples/*.jpg
 ```
 
-Adjust `ELA_SUSPICIOUS`, `CLONE_MATCH_MIN` and `NOISE_SPREAD_MAX` so your clean samples sit below threshold and your forged samples sit above. **Do this after Task 14 generates the samples** — come back to this step. Record the chosen numbers in the README so you can justify them to a judge.
+Adjust `ELA_SUSPICIOUS`, `CLONE_MATCH_MIN` and `NOISE_SPREAD_MAX` so your clean samples sit below threshold and your forged samples sit above. **Do this after Task 16 generates the samples** — come back to this step. Record the chosen numbers in the README so you can justify them to a judge.
 
 - [ ] **Step 6: Commit**
 
@@ -1726,7 +1711,7 @@ git commit -m "feat: ELA, copy-move and noise tamper forensics"
 
 ---
 
-## Task 9: OCR engine — text extraction and printed-vs-typed cross-check
+## Task 9: OCR engine — text, bounding boxes, and printed-vs-typed cross-check
 
 **Files:**
 - Create: `app/engines/ocr.py`, `tests/test_ocr.py`
@@ -1734,28 +1719,42 @@ git commit -m "feat: ELA, copy-move and noise tamper forensics"
 **Interfaces:**
 - Consumes: `Signal`, `rapidocr_onnxruntime.RapidOCR`
 - Produces:
-  - `extract_text(path: str) -> list[tuple[str, float]]` — (text, confidence) per detected box
+  - `extract_boxes(path: str) -> list[dict]` — each `{"text": str, "confidence": float, "box": (x, y, w, h)}`
   - `find_mrz_lines(lines: list[str]) -> list[str]`
-  - `run(path: str, claimed: dict) -> tuple[list[Signal], list[str]]` — signals plus any MRZ lines found, which Task 11 feeds into the MRZ engine
+  - `run(path: str, claimed: dict) -> tuple[list[Signal], list[str], list[dict]]` — signals, MRZ lines, **and the boxes Task 10 needs**
 
-**Why the cross-check matters:** the highest-value OCR signal is not "what does the document say" but "does what the document says match what the applicant typed". An applicant who types a name that does not appear anywhere on their own uploaded ID is the single strongest non-forensic fraud indicator in the whole system.
+**Why boxes matter:** this is the only engine that knows *where* each field sits on the page. Task 10 — the centerpiece — cannot exist without them. Returning boxes is not optional polish.
 
-**Performance note:** RapidOCR loads ~15MB of ONNX models on first call, taking 2-4 seconds. Load it once at module level as a singleton, never per request, or your demo will feel broken.
+**Why the cross-check matters:** the highest-value OCR signal is not "what does the document say" but "does what the document says match what the applicant typed". An applicant whose name appears nowhere on their own uploaded passport is the strongest non-forensic fraud indicator in the system.
+
+**Severity note:** `OCR_NAME_NOT_ON_DOCUMENT` is `high`, deliberately **not** `critical`. OCR misreads genuine documents often enough that an automatic REJECT on this signal alone would reject a valid applicant live on stage. It is also suppressed when OCR confidence is poor — a blurred scan is not evidence of fraud.
+
+**Performance note:** RapidOCR loads ~15MB of ONNX models on first call, taking 2-4 seconds. It is cached at module level as a singleton — never construct it per request, or the demo will feel broken.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/test_ocr.py
 import pytest
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from app.engines import ocr
+
+def _font(size):
+    for p in ("/System/Library/Fonts/Supplemental/Arial.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+              "C:/Windows/Fonts/arial.ttf"):
+        try:
+            return ImageFont.truetype(p, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
 
 @pytest.fixture
 def text_image(tmp_path):
-    img = Image.new("RGB", (600, 200), "white")
+    img = Image.new("RGB", (800, 260), "white")
     d = ImageDraw.Draw(img)
-    d.text((20, 60), "ANNA MARIA ERIKSSON", fill="black")
-    d.text((20, 110), "DOB 1974-08-12", fill="black")
+    d.text((30, 50), "ANNA MARIA ERIKSSON", fill="black", font=_font(44))
+    d.text((30, 140), "DOB 1974-08-12", fill="black", font=_font(44))
     p = tmp_path / "doc.png"
     img.save(p)
     return str(p)
@@ -1771,23 +1770,38 @@ def test_find_mrz_lines_picks_out_chevron_rows():
 def test_find_mrz_lines_returns_empty_when_absent():
     assert ocr.find_mrz_lines(["JUST A NAME", "AND A DATE"]) == []
 
-def test_extract_text_finds_something(text_image):
-    results = ocr.extract_text(text_image)
-    joined = " ".join(t for t, _ in results).upper()
+def test_extract_boxes_returns_text_and_geometry(text_image):
+    boxes = ocr.extract_boxes(text_image)
+    assert boxes, "OCR found no text at all"
+    joined = " ".join(b["text"] for b in boxes).upper()
     assert "ERIKSSON" in joined or "ANNA" in joined
+    for b in boxes:
+        x, y, w, h = b["box"]
+        assert w > 0 and h > 0
+        assert x >= 0 and y >= 0
+
+def test_run_returns_signals_mrz_and_boxes(text_image):
+    signals, mrz_lines, boxes = ocr.run(text_image, {"full_name": "Anna Maria Eriksson"})
+    assert isinstance(signals, list) and isinstance(mrz_lines, list)
+    assert boxes and "box" in boxes[0]
 
 def test_name_present_on_document_is_not_flagged(text_image):
-    signals, _ = ocr.run(text_image, {"full_name": "Anna Maria Eriksson"})
+    signals, _, _ = ocr.run(text_image, {"full_name": "Anna Maria Eriksson"})
     assert "OCR_NAME_NOT_ON_DOCUMENT" not in [s.code for s in signals]
 
 def test_name_absent_from_document_is_flagged(text_image):
-    signals, _ = ocr.run(text_image, {"full_name": "Bartholomew Cubbins"})
+    signals, _, _ = ocr.run(text_image, {"full_name": "Bartholomew Cubbins"})
     assert "OCR_NAME_NOT_ON_DOCUMENT" in [s.code for s in signals]
 
+def test_name_mismatch_is_high_not_critical(text_image):
+    signals, _, _ = ocr.run(text_image, {"full_name": "Bartholomew Cubbins"})
+    hit = [s for s in signals if s.code == "OCR_NAME_NOT_ON_DOCUMENT"][0]
+    assert hit.severity == "high"
+
 def test_run_handles_missing_file():
-    signals, mrz = ocr.run("/nope.png", {})
+    signals, mrz, boxes = ocr.run("/nope.png", {})
     assert "OCR_UNREADABLE" in [s.code for s in signals]
-    assert mrz == []
+    assert mrz == [] and boxes == []
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -1798,7 +1812,7 @@ Expected: FAIL — `ImportError: cannot import name 'ocr'`
 - [ ] **Step 3: Write `app/engines/ocr.py`**
 
 ```python
-"""OCR extraction and cross-validation of printed text against claimed fields."""
+"""OCR extraction with geometry, and cross-validation of printed vs claimed fields."""
 import functools
 import os
 import re
@@ -1807,108 +1821,454 @@ from app.models import Signal
 
 MRZ_RE = re.compile(r"^[A-Z0-9<]{25,}$")
 NAME_MATCH_THRESHOLD = 80
+MIN_CONFIDENCE_TO_JUDGE = 0.45   # below this, a miss is illegible text, not fraud
 
 @functools.lru_cache(maxsize=1)
 def _engine():
     from rapidocr_onnxruntime import RapidOCR
     return RapidOCR()
 
-def extract_text(path: str) -> list[tuple[str, float]]:
+def _poly_to_box(poly) -> tuple[int, int, int, int]:
+    xs = [float(pt[0]) for pt in poly]
+    ys = [float(pt[1]) for pt in poly]
+    x, y = int(min(xs)), int(min(ys))
+    return x, y, int(max(xs)) - x, int(max(ys)) - y
+
+def extract_boxes(path: str) -> list[dict]:
     result, _ = _engine()(path)
     if not result:
         return []
-    return [(item[1], float(item[2])) for item in result]
+    out = []
+    for item in result:
+        poly, text, score = item[0], item[1], item[2]
+        out.append({"text": text, "confidence": float(score), "box": _poly_to_box(poly)})
+    return out
 
 def find_mrz_lines(lines: list[str]) -> list[str]:
-    candidates = [ln.strip().upper().replace(" ", "")
-                  for ln in lines if ln and "<" in ln]
+    candidates = [ln.strip().upper().replace(" ", "") for ln in lines if ln and "<" in ln]
     return [ln for ln in candidates if MRZ_RE.match(ln)]
 
-def run(path: str, claimed: dict) -> tuple[list[Signal], list[str]]:
+def run(path: str, claimed: dict) -> tuple[list[Signal], list[str], list[dict]]:
     if not path or not os.path.exists(path):
-        return [Signal(code="OCR_UNREADABLE", engine="ocr", severity="low",
-                       message="No document image available for text extraction.")], []
+        return ([Signal(code="OCR_UNREADABLE", engine="ocr", severity="low",
+                        message="No document image available for text extraction.")], [], [])
     try:
-        results = extract_text(path)
+        boxes = extract_boxes(path)
     except Exception as e:
-        return [Signal(code="OCR_UNREADABLE", engine="ocr", severity="low",
-                       message=f"OCR failed: {type(e).__name__}: {e}")], []
+        return ([Signal(code="OCR_UNREADABLE", engine="ocr", severity="low",
+                        message=f"OCR failed: {type(e).__name__}: {e}")], [], [])
 
-    texts = [t for t, _ in results]
-    confidences = [c for _, c in results]
+    if not boxes:
+        return ([Signal(code="OCR_NO_TEXT_FOUND", engine="ocr", severity="medium",
+                        message="No readable text found on the document. Genuine travel "
+                                "documents always carry printed text.")], [], [])
+
+    texts = [b["text"] for b in boxes]
     mrz_lines = find_mrz_lines(texts)
     blob = " ".join(texts).upper()
+    avg_conf = sum(b["confidence"] for b in boxes) / len(boxes)
     signals: list[Signal] = []
 
-    if not texts:
-        return [Signal(code="OCR_NO_TEXT_FOUND", engine="ocr", severity="medium",
-                       message="No readable text found on the document. "
-                               "Genuine ID documents always carry printed text.")], []
-
-    avg_conf = sum(confidences) / len(confidences)
     if avg_conf < 0.55:
         signals.append(Signal(
             code="OCR_LOW_CONFIDENCE", engine="ocr", severity="low",
             message=f"Average OCR confidence is {avg_conf:.0%}; the document is blurred, "
-                    f"low resolution, or a photo of a screen.",
+                    f"low resolution, or a photograph of a screen.",
             evidence={"avg_confidence": round(avg_conf, 3)},
         ))
 
     name = (claimed.get("full_name") or "").strip()
-    if name:
+    if name and avg_conf >= MIN_CONFIDENCE_TO_JUDGE:
         best = max((fuzz.partial_ratio(part.upper(), blob)
                     for part in name.split() if len(part) > 2), default=0)
         if best < NAME_MATCH_THRESHOLD:
             signals.append(Signal(
-                code="OCR_NAME_NOT_ON_DOCUMENT", engine="ocr", severity="critical",
-                message=(f"The claimed name {name!r} does not appear anywhere in the text "
-                         f"printed on the uploaded document (best match {best:.0f}%). "
-                         f"The applicant is presenting someone else's document."),
+                code="OCR_NAME_NOT_ON_DOCUMENT", engine="ocr", severity="high",
+                message=(f"The claimed name {name!r} does not appear in the text printed "
+                         f"on the uploaded document (best match {best:.0f}%). The applicant "
+                         f"may be presenting another person's document."),
                 evidence={"claimed_name": name, "best_match_pct": round(best, 1)},
             ))
         else:
             signals.append(Signal(
                 code="OCR_NAME_CONFIRMED", engine="ocr", severity="info",
-                message=f"Claimed name is printed on the document ({best:.0f}% match).",
-            ))
+                message=f"Claimed name is printed on the document ({best:.0f}% match)."))
 
-    for field, code, label in (("dob", "OCR_DOB_NOT_ON_DOCUMENT", "date of birth"),
-                               ("aadhaar", "OCR_ID_NOT_ON_DOCUMENT", "ID number")):
-        value = re.sub(r"[\s\-/]", "", claimed.get(field) or "")
-        if value and len(value) >= 6:
-            flat = re.sub(r"[\s\-/]", "", blob)
-            if fuzz.partial_ratio(value, flat) < 80:
+    if avg_conf >= MIN_CONFIDENCE_TO_JUDGE:
+        flat = re.sub(r"[\s\-/]", "", blob)
+        for field, code, label in (("dob", "OCR_DOB_NOT_ON_DOCUMENT", "date of birth"),
+                                   ("passport_no", "OCR_NUMBER_NOT_ON_DOCUMENT",
+                                    "passport number")):
+            value = re.sub(r"[\s\-/]", "", (claimed.get(field) or "")).upper()
+            if value and len(value) >= 6 and fuzz.partial_ratio(value, flat) < 80:
                 signals.append(Signal(
-                    code=code, engine="ocr", severity="high",
+                    code=code, engine="ocr", severity="medium",
                     message=f"The claimed {label} is not printed on the uploaded document.",
                     evidence={field: value},
                 ))
 
     if mrz_lines:
-        signals.append(Signal(code="OCR_MRZ_FOUND", engine="ocr", severity="info",
-                              message=f"Located {len(mrz_lines)} machine-readable zone line(s); "
-                                      f"passed to MRZ validation.",
-                              evidence={"lines": mrz_lines}))
-    return signals, mrz_lines
+        signals.append(Signal(
+            code="OCR_MRZ_FOUND", engine="ocr", severity="info",
+            message=f"Located {len(mrz_lines)} machine-readable zone line(s); "
+                    f"passed to MRZ validation.",
+            evidence={"lines": mrz_lines}))
+
+    return signals, mrz_lines, boxes
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `./.venv/bin/pytest tests/test_ocr.py -v`
-Expected: PASS, 6 passed. First run is slow (model download + load).
-
-**If `test_extract_text_finds_something` fails** because Pillow's default bitmap font is too small for OCR: render the text larger by loading a TrueType font in the fixture — on macOS, `ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", 36)`. Do not weaken the assertion.
+Expected: PASS, 8 passed. First run is slow (model download and load).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add app/engines/ocr.py tests/test_ocr.py
-git commit -m "feat: OCR engine with claimed-vs-printed field cross-validation"
+git commit -m "feat: OCR engine returning geometry plus claimed-vs-printed cross-check"
 ```
 
 ---
 
-## Task 10: Face engine — portrait detection and selfie match
+## Task 10: Field-level forensics — WHICH field was altered · CENTERPIECE
+
+**This is the innovation claim, the best visual, and the answer to three of the four attack types named in the problem statement. If you are behind schedule, cut anything else first.**
+
+**Files:**
+- Create: `app/engines/fieldforensics.py`, `app/annotate.py`, `scripts/tune_fields.py`, `tests/test_fieldforensics.py`
+
+**Interfaces:**
+- Consumes: `Signal`, `tamper.ela_map`, OCR boxes from Task 9, optional portrait box from Task 11
+- Produces:
+  - `region_scores(ela: np.ndarray, boxes: list[tuple]) -> list[float]`
+  - `outlier_indices(values: list[float], z_threshold: float = 3.5) -> list[int]`
+  - `stamp_regions(path: str) -> list[tuple]`
+  - `run(path, ocr_boxes, portrait_box=None) -> tuple[list[Signal], list[dict]]`
+  - `annotate.draw_evidence(path, regions, out_dir) -> str | None`
+
+**The method, in the words you will use on stage:**
+
+> Error Level Analysis measures how much a region changes when the image is re-compressed. A region that went through the original capture pipeline changes very little. A region pasted or retyped afterwards has a different compression history and changes much more. We run this **per field** rather than over the whole page, then ask which field is a statistical outlier against its own neighbours. Because each field is compared against the other fields on the same document, we need no reference database and no genuine passport to compare against.
+
+**Why median + MAD, not mean + standard deviation:** a tampered field is itself an extreme value, so it drags a mean and a standard deviation toward itself — hiding the very thing you are hunting. Median and median-absolute-deviation are robust to outliers, so the tampered field stays visible. Use the modified z-score, `0.6745 * (x - median) / MAD`.
+
+**Honest limitation to say out loud:** ELA false-positives on high-contrast text and on images that were never JPEG. This is why field signals cap at `high`, never `critical`, and why the system recommends review rather than issuing an accusation.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_fieldforensics.py
+import numpy as np
+import pytest
+from PIL import Image
+from app.engines import fieldforensics as ff
+
+@pytest.fixture
+def doc_with_tampered_field(tmp_path):
+    """Five identical text-ish strips; strip 2 is repasted at a different quality."""
+    rng = np.random.default_rng(0)
+    canvas = np.full((400, 600, 3), 235, np.uint8)
+    boxes = []
+    for i in range(5):
+        y = 30 + i * 70
+        strip = rng.integers(60, 90, (40, 500, 3)).astype(np.uint8)
+        canvas[y:y + 40, 50:550] = strip
+        boxes.append((50, y, 500, 40))
+
+    p_clean = tmp_path / "clean.jpg"
+    Image.fromarray(canvas).save(p_clean, "JPEG", quality=60)
+
+    # Reload the compressed version, then paste fresh uncompressed content into box 2
+    arr = np.array(Image.open(p_clean))
+    x, y, w, h = boxes[2]
+    arr[y:y + h, x:x + w] = rng.integers(0, 255, (h, w, 3)).astype(np.uint8)
+    p_bad = tmp_path / "tampered.jpg"
+    Image.fromarray(arr).save(p_bad, "JPEG", quality=98)
+    return str(p_bad), boxes, 2
+
+def test_outlier_indices_finds_the_extreme_value():
+    assert ff.outlier_indices([10.0, 10.2, 9.8, 10.1, 80.0]) == [4]
+
+def test_outlier_indices_empty_when_uniform():
+    assert ff.outlier_indices([10.0, 10.1, 9.9, 10.05]) == []
+
+def test_outlier_indices_handles_tiny_input():
+    assert ff.outlier_indices([1.0]) == []
+    assert ff.outlier_indices([]) == []
+
+def test_region_scores_one_value_per_box(doc_with_tampered_field):
+    path, boxes, _ = doc_with_tampered_field
+    from app.engines.tamper import ela_map
+    scores = ff.region_scores(ela_map(path), boxes)
+    assert len(scores) == len(boxes)
+    assert all(s >= 0 for s in scores)
+
+def test_tampered_field_scores_highest(doc_with_tampered_field):
+    path, boxes, bad_idx = doc_with_tampered_field
+    from app.engines.tamper import ela_map
+    scores = ff.region_scores(ela_map(path), boxes)
+    assert scores.index(max(scores)) == bad_idx
+
+def test_run_names_the_tampered_field(doc_with_tampered_field):
+    path, boxes, bad_idx = doc_with_tampered_field
+    ocr_boxes = [{"text": f"FIELD {i}", "confidence": 0.95, "box": b}
+                 for i, b in enumerate(boxes)]
+    signals, regions = ff.run(path, ocr_boxes)
+    assert "FF_FIELD_TAMPERED" in [s.code for s in signals]
+    flagged = [r for r in regions if r["suspect"]]
+    assert flagged and flagged[0]["label"] == f"FIELD {bad_idx}"
+
+def test_run_with_no_boxes_is_graceful(tmp_path):
+    p = tmp_path / "x.jpg"
+    Image.new("RGB", (64, 64), "white").save(p, "JPEG")
+    signals, regions = ff.run(str(p), [])
+    assert "FF_NO_REGIONS" in [s.code for s in signals]
+    assert regions == []
+
+def test_run_never_raises_on_garbage(tmp_path):
+    p = tmp_path / "bad.jpg"
+    p.write_bytes(b"not an image")
+    signals, regions = ff.run(str(p), [{"text": "A", "confidence": 1.0, "box": (0, 0, 50, 50)}])
+    assert "FF_UNREADABLE" in [s.code for s in signals] or \
+           "FF_NO_REGIONS" in [s.code for s in signals]
+
+def test_no_field_signal_is_critical(doc_with_tampered_field):
+    path, boxes, _ = doc_with_tampered_field
+    ocr_boxes = [{"text": f"F{i}", "confidence": 0.9, "box": b} for i, b in enumerate(boxes)]
+    signals, _ = ff.run(path, ocr_boxes)
+    assert all(s.severity != "critical" for s in signals)
+
+def test_annotate_writes_an_image(tmp_path, doc_with_tampered_field):
+    from app import annotate
+    path, boxes, bad_idx = doc_with_tampered_field
+    regions = [{"box": b, "label": f"F{i}", "suspect": i == bad_idx, "score": 1.0}
+               for i, b in enumerate(boxes)]
+    out = annotate.draw_evidence(path, regions, str(tmp_path / "ev"))
+    assert out and Image.open(out).size == Image.open(path).size
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `./.venv/bin/pytest tests/test_fieldforensics.py -v`
+Expected: FAIL — `ImportError: cannot import name 'fieldforensics'`
+
+- [ ] **Step 3: Write `app/engines/fieldforensics.py`**
+
+```python
+"""Per-field tamper localization: which field on this document was altered."""
+import os
+import cv2
+import numpy as np
+from app.engines.tamper import ela_map
+from app.models import Signal
+
+Z_THRESHOLD = 3.5      # modified z-score above which a field is an outlier
+MIN_REGIONS = 3        # fewer than this and "outlier" is meaningless
+MIN_AREA = 200         # ignore specks
+
+def region_scores(ela: np.ndarray, boxes: list[tuple]) -> list[float]:
+    h, w = ela.shape[:2]
+    out: list[float] = []
+    for (x, y, bw, bh) in boxes:
+        x0, y0 = max(0, int(x)), max(0, int(y))
+        x1, y1 = min(w, int(x + bw)), min(h, int(y + bh))
+        patch = ela[y0:y1, x0:x1]
+        out.append(float(patch.mean()) if patch.size else 0.0)
+    return out
+
+def outlier_indices(values: list[float], z_threshold: float = Z_THRESHOLD) -> list[int]:
+    if len(values) < MIN_REGIONS:
+        return []
+    arr = np.asarray(values, dtype=np.float64)
+    median = float(np.median(arr))
+    mad = float(np.median(np.abs(arr - median)))
+    if mad < 1e-6:
+        spread = float(arr.std())
+        if spread < 1e-6:
+            return []
+        z = (arr - median) / spread
+    else:
+        z = 0.6745 * (arr - median) / mad
+    return [i for i in range(len(arr)) if z[i] > z_threshold]
+
+def stamp_regions(path: str) -> list[tuple]:
+    """Saturated colour blobs - visa stamps, seals and inked impressions."""
+    img = cv2.imread(path, cv2.IMREAD_COLOR)
+    if img is None:
+        return []
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (0, 90, 40), (179, 255, 255))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    out = []
+    for c in contours:
+        x, y, w, h = cv2.boundingRect(c)
+        if w * h >= MIN_AREA * 4 and 0.2 <= w / max(h, 1) <= 6.0:
+            out.append((x, y, w, h))
+    return sorted(out, key=lambda b: b[2] * b[3], reverse=True)[:6]
+
+def run(path: str, ocr_boxes: list[dict],
+        portrait_box: tuple | None = None) -> tuple[list[Signal], list[dict]]:
+    if not path or not os.path.exists(path):
+        return ([Signal(code="FF_UNREADABLE", engine="fieldforensics", severity="low",
+                        message="No document image available for field-level analysis.")], [])
+
+    regions: list[dict] = []
+    for b in ocr_boxes:
+        x, y, w, h = b["box"]
+        if w * h >= MIN_AREA:
+            regions.append({"box": (x, y, w, h), "label": b["text"][:32],
+                            "kind": "text", "suspect": False, "score": 0.0})
+    if portrait_box:
+        regions.append({"box": tuple(portrait_box), "label": "PHOTOGRAPH",
+                        "kind": "portrait", "suspect": False, "score": 0.0})
+
+    try:
+        for sb in stamp_regions(path):
+            regions.append({"box": sb, "label": "STAMP", "kind": "stamp",
+                            "suspect": False, "score": 0.0})
+    except Exception:
+        pass   # stamps are a bonus; never let them break the engine
+
+    if len(regions) < MIN_REGIONS:
+        return ([Signal(
+            code="FF_NO_REGIONS", engine="fieldforensics", severity="low",
+            message=(f"Only {len(regions)} analysable region(s) found; field-level "
+                     f"comparison needs at least {MIN_REGIONS}."))], [])
+
+    try:
+        ela = ela_map(path)
+        scores = region_scores(ela, [r["box"] for r in regions])
+    except Exception as e:
+        return ([Signal(code="FF_UNREADABLE", engine="fieldforensics", severity="low",
+                        message=f"Field analysis failed: {type(e).__name__}: {e}")], [])
+
+    for r, sc in zip(regions, scores):
+        r["score"] = round(float(sc), 2)
+
+    bad = outlier_indices(scores)
+    for i in bad:
+        regions[i]["suspect"] = True
+
+    signals: list[Signal] = []
+    median = float(np.median(scores))
+
+    for i in bad:
+        r = regions[i]
+        if r["kind"] == "portrait":
+            signals.append(Signal(
+                code="FF_PHOTO_TAMPERED", engine="fieldforensics", severity="high",
+                message=(f"The photograph region has a compression residual of "
+                         f"{r['score']} against a document median of {median:.2f}. "
+                         f"The portrait was pasted in after the document was produced."),
+                evidence={"box": list(r["box"]), "score": r["score"],
+                          "document_median": round(median, 2)}))
+        elif r["kind"] == "stamp":
+            signals.append(Signal(
+                code="FF_STAMP_TAMPERED", engine="fieldforensics", severity="high",
+                message=(f"A stamp or seal region has a compression residual of "
+                         f"{r['score']} against a document median of {median:.2f}. "
+                         f"The stamp was added or altered after issue."),
+                evidence={"box": list(r["box"]), "score": r["score"],
+                          "document_median": round(median, 2)}))
+        else:
+            signals.append(Signal(
+                code="FF_FIELD_TAMPERED", engine="fieldforensics", severity="high",
+                message=(f"The field reading {r['label']!r} has a compression residual of "
+                         f"{r['score']} against a document median of {median:.2f} - it was "
+                         f"edited after the rest of the document was produced."),
+                evidence={"field_text": r["label"], "box": list(r["box"]),
+                          "score": r["score"], "document_median": round(median, 2)}))
+
+    if not signals:
+        signals.append(Signal(
+            code="FF_ALL_FIELDS_CONSISTENT", engine="fieldforensics", severity="info",
+            message=(f"All {len(regions)} analysed regions share a consistent compression "
+                     f"history (median residual {median:.2f}). No single field stands out "
+                     f"as edited."),
+            evidence={"regions_analysed": len(regions),
+                      "document_median": round(median, 2)}))
+    return signals, regions
+```
+
+- [ ] **Step 4: Write `app/annotate.py`**
+
+```python
+"""Draws the annotated evidence image: suspect regions boxed in red."""
+import os
+import uuid
+import cv2
+
+RED = (0, 0, 220)
+GREEN = (90, 170, 90)
+
+def draw_evidence(path: str, regions: list[dict], out_dir: str) -> str | None:
+    img = cv2.imread(path, cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    os.makedirs(out_dir, exist_ok=True)
+
+    for r in regions:
+        x, y, w, h = [int(v) for v in r["box"]]
+        suspect = bool(r.get("suspect"))
+        colour = RED if suspect else GREEN
+        cv2.rectangle(img, (x, y), (x + w, y + h), colour, 3 if suspect else 1)
+        if suspect:
+            label = f"ALTERED: {r.get('label', '')}"[:40]
+            ty = max(18, y - 8)
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            cv2.rectangle(img, (x, ty - th - 6), (x + tw + 8, ty + 4), RED, -1)
+            cv2.putText(img, label, (x + 4, ty), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6, (255, 255, 255), 2, cv2.LINE_AA)
+
+    dest = os.path.join(out_dir, f"{uuid.uuid4().hex}.jpg")
+    cv2.imwrite(dest, img)
+    return dest
+```
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `./.venv/bin/pytest tests/test_fieldforensics.py -v`
+Expected: PASS, 10 passed
+
+**If `test_tampered_field_scores_highest` fails**, the fixture's repaste is not producing a strong enough compression difference. Widen the gap further — clean at `quality=50`, tampered at `quality=99`. Do not weaken the assertion; this behaviour is the entire product.
+
+- [ ] **Step 6: Write `scripts/tune_fields.py`**
+
+```python
+"""Prints per-sample field-forensics output so thresholds can be calibrated."""
+import glob
+from app.engines import ocr
+from app.engines import fieldforensics as ff
+
+def main() -> None:
+    for path in sorted(glob.glob("data/samples/*.jpg")):
+        _, _, boxes = ocr.run(path, {})
+        signals, regions = ff.run(path, boxes)
+        flagged = [r["label"] for r in regions if r["suspect"]]
+        print(f"{path:46s} regions={len(regions):3d} flagged={flagged}")
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 7: Tune `Z_THRESHOLD` against real samples — return here after Task 16**
+
+Run: `./.venv/bin/python scripts/tune_fields.py`
+
+Clean samples must flag **nothing**. Tampered samples must flag the field you actually tampered. Raise `Z_THRESHOLD` if clean documents flag; lower it if forgeries slip through. Record the final value in the README with your justification.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add app/engines/fieldforensics.py app/annotate.py scripts/tune_fields.py tests/test_fieldforensics.py
+git commit -m "feat: field-level tamper localization with annotated evidence output"
+```
+
+---
+
+## Task 11: Face engine — portrait detection and selfie match
 
 **Cut this task without hesitation if Task 0 Step 3 printed `False False`, or if you are behind schedule at hour 16.** It is the most impressive engine and the most expendable one.
 
@@ -2141,18 +2501,160 @@ git commit -m "feat: face detection and selfie-to-portrait biometric match"
 
 ---
 
-## Task 11: Pipeline orchestrator
+## Task 12: Cross-document consistency · stretch, cut first
+
+**Why:** the PS asks us to verify "the document to the selfies and other documents". A traveller presents a passport **and** a visa. Each can be internally flawless and still contradict the other — the visa names a different passport number, or the DOB differs by a digit. Prior submissions for the same passport number are a third source to compare against.
+
+**Files:**
+- Create: `app/engines/crossdoc.py`, `tests/test_crossdoc.py`
+
+**Interfaces:**
+- Consumes: `Signal`, `rapidfuzz`
+- Produces: `run(sources: list[dict]) -> list[Signal]` — each source is `{"source": str, "full_name": str, "dob": str, "passport_no": str, "nationality": str}`; any key may be missing or empty. `source` is a label such as `"passport MRZ"`, `"visa MRZ"`, `"claimed"`, `"prior case a3f9c2"`.
+
+**Design note:** a pure function over a list of field dictionaries. It knows nothing about images, OCR or the database — the pipeline assembles the sources. This keeps it trivially testable, and it means adding a fourth document type later costs zero changes here.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_crossdoc.py
+from app.engines import crossdoc
+
+PASSPORT = {"source": "passport MRZ", "full_name": "ANNA MARIA ERIKSSON",
+            "dob": "740812", "passport_no": "L898902C3", "nationality": "UTO"}
+
+def test_consistent_documents_are_clean():
+    visa = dict(PASSPORT, source="visa MRZ")
+    signals = crossdoc.run([PASSPORT, visa])
+    assert [s.code for s in signals] == ["XDOC_CONSISTENT"]
+
+def test_passport_number_disagreement_is_critical():
+    visa = dict(PASSPORT, source="visa MRZ", passport_no="X12345678")
+    signals = crossdoc.run([PASSPORT, visa])
+    hit = [s for s in signals if s.code == "XDOC_PASSPORT_NO_MISMATCH"]
+    assert hit and hit[0].severity == "critical"
+
+def test_dob_disagreement_is_flagged():
+    visa = dict(PASSPORT, source="visa MRZ", dob="740813")
+    assert "XDOC_DOB_MISMATCH" in [s.code for s in crossdoc.run([PASSPORT, visa])]
+
+def test_name_order_and_case_do_not_count_as_mismatch():
+    visa = dict(PASSPORT, source="visa MRZ", full_name="eriksson anna maria")
+    assert "XDOC_NAME_MISMATCH" not in [s.code for s in crossdoc.run([PASSPORT, visa])]
+
+def test_genuinely_different_name_is_flagged():
+    visa = dict(PASSPORT, source="visa MRZ", full_name="JOHN PETER SMITH")
+    assert "XDOC_NAME_MISMATCH" in [s.code for s in crossdoc.run([PASSPORT, visa])]
+
+def test_missing_fields_are_not_treated_as_disagreement():
+    sparse = {"source": "claimed", "full_name": "Anna Maria Eriksson"}
+    codes = [s.code for s in crossdoc.run([PASSPORT, sparse])]
+    assert "XDOC_DOB_MISMATCH" not in codes
+    assert "XDOC_PASSPORT_NO_MISMATCH" not in codes
+
+def test_single_source_emits_nothing():
+    assert crossdoc.run([PASSPORT]) == []
+
+def test_message_names_both_sources():
+    visa = dict(PASSPORT, source="visa MRZ", dob="740813")
+    hit = [s for s in crossdoc.run([PASSPORT, visa]) if s.code == "XDOC_DOB_MISMATCH"][0]
+    assert "passport MRZ" in hit.message and "visa MRZ" in hit.message
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `./.venv/bin/pytest tests/test_crossdoc.py -v`
+Expected: FAIL — `ImportError: cannot import name 'crossdoc'`
+
+- [ ] **Step 3: Write `app/engines/crossdoc.py`**
+
+```python
+"""Compares identity fields across passport, visa, claim and prior submissions."""
+import re
+from itertools import combinations
+from rapidfuzz import fuzz
+from app.models import Signal
+
+NAME_AGREE = 85
+
+def _norm(v: str | None) -> str:
+    return re.sub(r"[\s<\-/]", "", (v or "").upper())
+
+def _names_agree(a: str, b: str) -> bool:
+    return fuzz.token_sort_ratio(a.upper(), b.upper()) >= NAME_AGREE
+
+_FIELDS = [
+    ("passport_no", "XDOC_PASSPORT_NO_MISMATCH", "passport number", "critical"),
+    ("dob",         "XDOC_DOB_MISMATCH",         "date of birth",   "high"),
+    ("nationality", "XDOC_NATIONALITY_MISMATCH", "nationality",     "high"),
+]
+
+def run(sources: list[dict]) -> list[Signal]:
+    usable = [src for src in sources if src]
+    if len(usable) < 2:
+        return []
+
+    signals: list[Signal] = []
+    seen: set[tuple] = set()
+
+    for a, b in combinations(usable, 2):
+        for key, code, label, severity in _FIELDS:
+            va, vb = _norm(a.get(key)), _norm(b.get(key))
+            if va and vb and va != vb and (code, key) not in seen:
+                seen.add((code, key))
+                signals.append(Signal(
+                    code=code, engine="crossdoc", severity=severity,
+                    message=(f"The {label} disagrees between documents: "
+                             f"{a['source']} says {a.get(key)!r}, "
+                             f"{b['source']} says {b.get(key)!r}."),
+                    evidence={a["source"]: a.get(key), b["source"]: b.get(key)},
+                ))
+
+        na, nb = (a.get("full_name") or "").strip(), (b.get("full_name") or "").strip()
+        if na and nb and not _names_agree(na, nb) and ("XDOC_NAME_MISMATCH",) not in seen:
+            seen.add(("XDOC_NAME_MISMATCH",))
+            signals.append(Signal(
+                code="XDOC_NAME_MISMATCH", engine="crossdoc", severity="high",
+                message=(f"The holder's name disagrees between documents: "
+                         f"{a['source']} says {na!r}, {b['source']} says {nb!r}."),
+                evidence={a["source"]: na, b["source"]: nb},
+            ))
+
+    if not signals:
+        signals.append(Signal(
+            code="XDOC_CONSISTENT", engine="crossdoc", severity="info",
+            message=(f"Name, date of birth, passport number and nationality agree across "
+                     f"all {len(usable)} sources ({', '.join(x['source'] for x in usable)})."),
+        ))
+    return signals
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `./.venv/bin/pytest tests/test_crossdoc.py -v`
+Expected: PASS, 8 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add app/engines/crossdoc.py tests/test_crossdoc.py
+git commit -m "feat: cross-document consistency across passport, visa and prior cases"
+```
+
+---
+
+## Task 13: Pipeline orchestrator
 
 **Files:**
 - Create: `app/pipeline.py`, `tests/test_pipeline.py`
 
 **Interfaces:**
-- Consumes: every engine module, `scoring`, `db`, `metadata.file_sha256`
+- Consumes: every engine module, `scoring`, `db`, `annotate.draw_evidence`, `metadata.file_sha256`
 - Produces: `screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResult`
 
 **The single most important property of this module:** no engine may ever break the request. Each is called inside its own `try`, and a raised exception becomes an `ENGINE_ERROR` signal plus an entry in `result.engine_errors`. A judge uploading a corrupt file must still see a verdict screen.
 
-**Ordering matters once:** OCR runs before MRZ, because OCR is what finds the MRZ lines to validate.
+**Ordering matters:** OCR runs first, because it discovers both the MRZ lines that `mrz` validates and the field boxes that `fieldforensics` analyses. Face detection runs before `fieldforensics` so the portrait region can be included in the per-field comparison.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2171,7 +2673,7 @@ def dbfile(tmp_path):
 def test_clean_identity_without_document_scores_low(dbfile):
     inp = ScreeningInput(claimed={
         "full_name": "Jonathan Michael Brewster", "dob": "1988-03-14",
-        "aadhaar": "234567890124", "pan": "ABCPK1234F",
+        "passport_no": "L898902C3", "nationality": "UTO",
         "email": "jonathan.brewster@gmail.com", "phone": "9876543210",
     })
     result = pipeline.screen(inp, dbfile)
@@ -2197,11 +2699,11 @@ def test_engine_exception_is_captured_not_raised(dbfile, monkeypatch):
     assert "ENGINE_ERROR" in [s.code for s in result.signals]
 
 def test_case_is_persisted_and_second_submission_sees_it(dbfile):
-    claimed = {"full_name": "Anna Eriksson", "aadhaar": "234567890124"}
+    claimed = {"full_name": "Anna Eriksson", "passport_no": "L898902C3"}
     pipeline.screen(ScreeningInput(claimed=claimed), dbfile)
     second = pipeline.screen(
         ScreeningInput(claimed={"full_name": "Different Person",
-                                "aadhaar": "234567890124"}), dbfile)
+                                "passport_no": "L898902C3"}), dbfile)
     assert "VEL_ID_REUSED_NEW_NAME" in [s.code for s in second.signals]
 
 def test_result_serialises_to_dict(dbfile):
@@ -2221,8 +2723,9 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'app.pipeline'`
 """Fans a screening request out across every engine and folds the result."""
 import os
 import uuid
-from app import config, db, scoring
-from app.engines import face, identity, metadata, mrz, ocr, tamper, velocity, watchlist
+from app import annotate, config, db, scoring
+from app.engines import (crossdoc, face, fieldforensics, identity, metadata, mrz,
+                         ocr, tamper, velocity, watchlist)
 from app.models import ScreeningInput, ScreeningResult, Signal
 
 def _safe(engine_name: str, fn, *args, **kwargs):
@@ -2235,13 +2738,49 @@ def _safe(engine_name: str, fn, *args, **kwargs):
                      message=f"The {engine_name} engine could not complete: {e}")
         return [sig], err
 
+def _ocr_document(path: str, claimed: dict, label: str, signals: list, errors: list):
+    """OCR one document. Returns (mrz_lines, boxes); never raises."""
+    try:
+        sigs, mrz_lines, boxes = ocr.run(path, claimed)
+        for sg in sigs:
+            if label != "passport":
+                sg.message = f"[{label}] {sg.message}"
+        signals.extend(sigs)
+        return mrz_lines, boxes
+    except Exception as e:
+        errors.append(f"ocr[{label}]: {type(e).__name__}: {e}")
+        signals.append(Signal(code="ENGINE_ERROR", engine="ocr", severity="low",
+                              message=f"OCR could not read the {label}: {e}"))
+        return [], []
+
+def _mrz_fields(lines: list[str], label: str) -> dict | None:
+    if len(lines) < 2:
+        return None
+    try:
+        f = mrz.parse_td3(lines[0], lines[1])
+    except Exception:
+        return None
+    return {"source": f"{label} MRZ", "full_name": f"{f['given_names']} {f['surname']}",
+            "dob": f["dob"], "passport_no": f["doc_number"], "nationality": f["nationality"]}
+
+def _largest_face_box(path: str) -> tuple | None:
+    try:
+        faces = face.detect_faces(path)
+    except Exception:
+        return None
+    if not faces:
+        return None
+    return tuple(max(faces, key=lambda f: f["box"][2] * f["box"][3])["box"])
+
 def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResult:
     case_id = uuid.uuid4().hex[:12]
     signals: list[Signal] = []
     errors: list[str] = []
     doc_hash = None
+    evidence_path = None
 
     has_doc = bool(inp.doc_path and os.path.exists(inp.doc_path))
+    has_visa = bool(inp.visa_path and os.path.exists(inp.visa_path))
 
     if has_doc:
         try:
@@ -2249,23 +2788,24 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
         except Exception as e:
             errors.append(f"hash: {e}")
 
-    # Text first — OCR is what discovers the MRZ lines the MRZ engine validates.
-    mrz_lines: list[str] = []
+    # 1. Text first. OCR discovers the MRZ lines and the field boxes everything else needs.
+    mrz_lines, boxes = ([], [])
     if has_doc:
-        try:
-            ocr_signals, mrz_lines = ocr.run(inp.doc_path, inp.claimed)
-            signals += ocr_signals
-        except Exception as e:
-            errors.append(f"ocr: {type(e).__name__}: {e}")
-            signals.append(Signal(code="ENGINE_ERROR", engine="ocr", severity="low",
-                                  message=f"The ocr engine could not complete: {e}"))
+        mrz_lines, boxes = _ocr_document(inp.doc_path, inp.claimed, "passport", signals, errors)
 
+    visa_mrz: list[str] = []
+    visa_boxes: list[dict] = []
+    if has_visa:
+        visa_mrz, visa_boxes = _ocr_document(inp.visa_path, {}, "visa", signals, errors)
+
+    # 2. MRZ check digits - the self-proving arithmetic.
     if mrz_lines:
         out, err = _safe("mrz", mrz.run, mrz_lines, inp.claimed)
         signals += out
         if err:
             errors.append(err)
 
+    # 3. Rules engines that need no image.
     for name, fn, args in (
         ("identity",  identity.run,  (inp.claimed,)),
         ("watchlist", watchlist.run, (inp.claimed,)),
@@ -2276,7 +2816,22 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
         if err:
             errors.append(err)
 
+    # 4. Cross-document: passport MRZ vs visa MRZ vs the applicant's own claim.
+    sources = [src for src in (
+        _mrz_fields(mrz_lines, "passport"),
+        _mrz_fields(visa_mrz, "visa"),
+        {"source": "claimed", **{k: inp.claimed.get(k) for k in
+                                 ("full_name", "dob", "passport_no", "nationality")}},
+    ) if src]
+    out, err = _safe("crossdoc", crossdoc.run, sources)
+    signals += out
+    if err:
+        errors.append(err)
+
+    # 5. Pixel forensics on the passport image.
     if has_doc:
+        portrait_box = _largest_face_box(inp.doc_path)
+
         for name, fn, args in (
             ("metadata", metadata.run, (inp.doc_path,)),
             ("tamper",   tamper.run,   (inp.doc_path,)),
@@ -2287,9 +2842,36 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
             if err:
                 errors.append(err)
 
+        # 6. The centerpiece: which field was altered, drawn onto an evidence image.
+        try:
+            ff_signals, regions = fieldforensics.run(inp.doc_path, boxes, portrait_box)
+            signals += ff_signals
+            if regions:
+                evidence_path = annotate.draw_evidence(inp.doc_path, regions,
+                                                       config.EVIDENCE_DIR)
+        except Exception as e:
+            errors.append(f"fieldforensics: {type(e).__name__}: {e}")
+            signals.append(Signal(code="ENGINE_ERROR", engine="fieldforensics",
+                                  severity="low",
+                                  message=f"Field-level analysis could not complete: {e}"))
+
+    # 7. Same analysis on the visa - this is what catches a forged entry stamp.
+    if has_visa:
+        try:
+            v_signals, v_regions = fieldforensics.run(inp.visa_path, visa_boxes,
+                                                      _largest_face_box(inp.visa_path))
+            for sg in v_signals:
+                sg.message = f"[visa] {sg.message}"
+            signals += [sg for sg in v_signals if sg.severity != "info"]
+            if any(r["suspect"] for r in v_regions):
+                evidence_path = annotate.draw_evidence(inp.visa_path, v_regions,
+                                                       config.EVIDENCE_DIR)
+        except Exception as e:
+            errors.append(f"fieldforensics[visa]: {type(e).__name__}: {e}")
+
     score, band = scoring.score_signals(signals)
-    result = ScreeningResult(case_id=case_id, score=score, band=band,
-                             signals=signals, engine_errors=errors)
+    result = ScreeningResult(case_id=case_id, score=score, band=band, signals=signals,
+                             engine_errors=errors, evidence_path=evidence_path)
 
     try:
         db.save_case(db_path, case_id, inp.claimed, score, band, signals, doc_hash)
@@ -2317,7 +2899,7 @@ git commit -m "feat: screening pipeline with per-engine fault isolation"
 
 ---
 
-## Task 12: HTTP API
+## Task 14: HTTP API
 
 **Files:**
 - Modify: `app/main.py` (replace the Task 0 contents entirely)
@@ -2326,7 +2908,8 @@ git commit -m "feat: screening pipeline with per-engine fault isolation"
 **Interfaces:**
 - Consumes: `pipeline.screen`, `db.all_cases`, `report`
 - Produces:
-  - `POST /api/screen` — multipart: optional `document`, optional `selfie`, plus form fields `full_name, dob, aadhaar, pan, email, phone, address`. Returns the `ScreeningResult` dict plus `top_reasons`.
+  - `POST /api/screen` — multipart: optional `document` (passport), optional `visa`, optional `selfie`, plus form fields `full_name, dob, passport_no, nationality, email, phone, address`. Returns the `ScreeningResult` dict plus `top_reasons` and `evidence_url`.
+  - `GET /evidence/<file>` — annotated evidence images
   - `GET /api/cases` — recent case list for the dashboard
   - `GET /health`
   - `GET /` — serves `static/index.html`
@@ -2344,6 +2927,7 @@ def client(tmp_path, monkeypatch):
     from app import config
     monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "api.db"))
     monkeypatch.setattr(config, "UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.setattr(config, "EVIDENCE_DIR", str(tmp_path / "evidence"))
     from app.main import app, startup
     startup()
     return TestClient(app)
@@ -2353,7 +2937,7 @@ def test_health(client):
 
 def test_screen_fields_only(client):
     r = client.post("/api/screen", data={"full_name": "Jonathan Brewster",
-                                         "aadhaar": "234567890124"})
+                                         "passport_no": "L898902C3"})
     assert r.status_code == 200
     body = r.json()
     assert body["band"] in ("CLEAR", "REVIEW", "REJECT")
@@ -2410,6 +2994,7 @@ app = FastAPI(title="Fake Identity & Document Screening System")
 
 def startup() -> None:
     os.makedirs(config.UPLOAD_DIR, exist_ok=True)
+    os.makedirs(config.EVIDENCE_DIR, exist_ok=True)
     db.init_db(config.DB_PATH)
 
 @app.on_event("startup")
@@ -2432,19 +3017,22 @@ def _save_upload(upload: UploadFile | None) -> str | None:
 @app.post("/api/screen")
 async def api_screen(
     document: UploadFile | None = File(default=None),
+    visa: UploadFile | None = File(default=None),
     selfie: UploadFile | None = File(default=None),
     full_name: str = Form(default=""),
     dob: str = Form(default=""),
-    aadhaar: str = Form(default=""),
-    pan: str = Form(default=""),
+    passport_no: str = Form(default=""),
+    nationality: str = Form(default=""),
     email: str = Form(default=""),
     phone: str = Form(default=""),
     address: str = Form(default=""),
 ) -> dict:
     inp = ScreeningInput(
-        claimed={"full_name": full_name, "dob": dob, "aadhaar": aadhaar,
-                 "pan": pan, "email": email, "phone": phone, "address": address},
+        claimed={"full_name": full_name, "dob": dob, "passport_no": passport_no,
+                 "nationality": nationality, "email": email, "phone": phone,
+                 "address": address},
         doc_path=_save_upload(document),
+        visa_path=_save_upload(visa),
         selfie_path=_save_upload(selfie),
     )
     result = screen(inp, config.DB_PATH)
@@ -2453,6 +3041,8 @@ async def api_screen(
         {"code": s.code, "engine": s.engine, "severity": s.severity, "message": s.message}
         for s in scoring.top_reasons(result.signals)
     ]
+    body["evidence_url"] = (f"/evidence/{os.path.basename(result.evidence_path)}"
+                            if result.evidence_path else None)
     return body
 
 @app.get("/api/cases")
@@ -2467,18 +3057,20 @@ def api_report(case_id: str) -> str:
 def index() -> FileResponse:
     return FileResponse("static/index.html")
 
+os.makedirs(config.EVIDENCE_DIR, exist_ok=True)
+app.mount("/evidence", StaticFiles(directory=config.EVIDENCE_DIR), name="evidence")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 ```
 
-**Note:** `app/report.py` does not exist until Task 15. To keep this task independently testable, create a one-line stub now and fill it in at Task 15:
+**Note:** `app/report.py` does not exist until Task 19. To keep this task independently testable, create a one-line stub now and fill it in at Task 19:
 
 ```python
-# app/report.py  (stub — completed in Task 15)
+# app/report.py  (stub — completed in Task 19)
 def render_case_html(db_path: str, case_id: str) -> str:
     return "<h1>Report pending</h1>"
 ```
 
-You also need `static/index.html` to exist for `GET /` — create an empty placeholder file now; Task 13 writes the real one.
+You also need `static/index.html` to exist for `GET /` — create an empty placeholder file now; Task 15 writes the real one.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -2503,7 +3095,7 @@ git commit -m "feat: screening API with multipart upload and case listing"
 
 ---
 
-## Task 13: Frontend
+## Task 15: Frontend
 
 **Files:**
 - Create: `static/index.html` (replacing the Task 12 placeholder), `static/app.js`, `static/styles.css`
@@ -2512,7 +3104,8 @@ git commit -m "feat: screening API with multipart upload and case listing"
 - Consumes: `POST /api/screen`, `GET /api/cases`
 - Produces: the thing the judges actually look at
 
-**Design direction — three rules, because a hackathon UI fails in predictable ways:**
+**Design direction — four rules, because a hackathon UI fails in predictable ways:**
+0. **The evidence image is the hero.** The passport with the altered field boxed in red is the single image judges will remember. It sits directly under the verdict, full width.
 1. **The verdict is the page.** A large score number and a colour-coded band, readable from across a room on a projector. Everything else is secondary.
 2. **Every signal shows its reasoning.** A list of reason cards, each with severity chip, engine name, and the full human-readable message. This is the "explainable AI" story — do not truncate the messages.
 3. **No framework, no build.** Tailwind via CDN, one `fetch`, `innerHTML` rendering. A build step that breaks at hour 30 is an unforced loss.
@@ -2545,12 +3138,15 @@ git commit -m "feat: screening API with multipart upload and case listing"
           <input name="phone" placeholder="Phone" class="inp">
         </div>
         <div class="grid grid-cols-2 gap-3">
-          <input name="aadhaar" placeholder="National ID / Aadhaar" class="inp">
-          <input name="pan" placeholder="PAN" class="inp">
+          <input name="passport_no" placeholder="Passport number" class="inp">
+          <input name="nationality" placeholder="Nationality (e.g. IND)" class="inp">
         </div>
         <input name="email" placeholder="Email" class="inp">
-        <label class="block text-sm text-slate-400">Identity document
+        <label class="block text-sm text-slate-400">Passport image
           <input type="file" name="document" accept="image/*,.pdf" class="inp mt-1">
+        </label>
+        <label class="block text-sm text-slate-400">Visa image (optional)
+          <input type="file" name="visa" accept="image/*" class="inp mt-1">
         </label>
         <label class="block text-sm text-slate-400">Selfie (optional)
           <input type="file" name="selfie" accept="image/*" class="inp mt-1">
@@ -2568,6 +3164,12 @@ git commit -m "feat: screening API with multipart upload and case listing"
         <div id="band" class="text-2xl font-semibold mt-1"></div>
         <div id="case-id" class="text-xs text-slate-500 mt-2"></div>
       </div>
+      <figure id="evidence-wrap" class="hidden bg-slate-900 rounded-xl p-3 border border-slate-800">
+        <figcaption class="text-sm text-slate-400 mb-2">
+          Evidence — altered regions boxed in red
+        </figcaption>
+        <img id="evidence" alt="Annotated evidence image" class="w-full rounded-lg">
+      </figure>
       <div id="reasons" class="space-y-2"></div>
       <details id="all-signals-wrap" class="hidden bg-slate-900 rounded-xl border border-slate-800 p-4">
         <summary class="cursor-pointer text-sm text-slate-400">All engine output</summary>
@@ -2668,6 +3270,14 @@ function render(data) {
   band.style.color = style.text;
   document.getElementById("case-id").textContent = `Case ${data.case_id}`;
 
+  const evWrap = document.getElementById("evidence-wrap");
+  if (data.evidence_url) {
+    document.getElementById("evidence").src = `${data.evidence_url}?t=${Date.now()}`;
+    evWrap.classList.remove("hidden");
+  } else {
+    evWrap.classList.add("hidden");
+  }
+
   const reasons = data.top_reasons || [];
   document.getElementById("reasons").innerHTML = reasons.length
     ? reasons.map(signalCard).join("")
@@ -2687,8 +3297,9 @@ Run: `./.venv/bin/uvicorn app.main:app --reload --port 8000`, open `http://local
 
 Check all three by hand:
 1. Submit `Viktor Anatolyevich Petrov` with nothing else → red REJECT, watchlist reason card.
-2. Submit `Jonathan Brewster` + aadhaar `234567890124` → green CLEAR.
-3. Submit `Asdf Qwerty` + aadhaar `999999999999` + email `x@mailinator.com` → amber or red with three distinct reason cards.
+2. Submit `Jonathan Brewster` + passport no `L898902C3` → green CLEAR.
+3. Submit `Asdf Qwerty` + email `x@mailinator.com` + phone `1234567890` → amber or red with three distinct reason cards.
+4. After Task 16: upload `03_dob_retyped.jpg` → **the evidence image appears with the DOB field boxed in red.**
 
 - [ ] **Step 5: Commit**
 
@@ -2699,23 +3310,36 @@ git commit -m "feat: screening UI with verdict display and per-signal reasoning"
 
 ---
 
-## Task 14: Sample case generator
+## Task 16: Sample case generator — passports and visas
 
 **Files:**
 - Create: `scripts/make_samples.py`, `data/samples/.gitkeep`
 
 **Interfaces:**
 - Consumes: `PIL`, `app.engines.mrz.check_digit`
-- Produces: six files in `data/samples/` plus `data/samples/manifest.json` describing the expected verdict of each
+- Produces: seven images in `data/samples/` plus `data/samples/manifest.json` recording each case's expected verdict and the story to tell
 
-**This task is worth more than it looks.** A demo without prepared, deterministic sample cases becomes a live improvisation in front of judges. Six files that each cleanly trigger a different engine is what turns the demo from "here is a form" into "watch it catch six different frauds".
+**This task is worth far more than it looks.** A demo without prepared, deterministic cases becomes live improvisation in front of judges. Seven files that each cleanly exercise one attack named in the PS is what turns "here is a form" into "watch it catch every forgery in your problem statement".
 
-**Never use a real identity document, including your own.** Every sample is drawn from scratch.
+**Every sample is drawn from scratch. Never a real document.**
+
+**How the field tamper is simulated — this matters for honesty on stage:** the generator saves the genuine document as JPEG (its "issued" compression history), reloads it, paints over one field and re-types a new value, then saves again at a different quality. That is precisely the physical process a forger follows in an image editor, and it is exactly the compression discontinuity `fieldforensics` hunts.
+
+| # | File | PS attack | Expected |
+|---|---|---|---|
+| 1 | `01_clean_passport.jpg` | — | CLEAR |
+| 2 | `02_mrz_tampered.jpg` | altered number | REVIEW/REJECT — MRZ check digit |
+| 3 | `03_dob_retyped.jpg` | **altered DOB** | REVIEW — **DOB boxed red** ⭐ |
+| 4 | `04_photo_substituted.jpg` | **altered photograph** | REVIEW — portrait boxed red |
+| 5 | `05_name_retyped.jpg` | **altered name** | REVIEW/REJECT — name boxed + MRZ name mismatch |
+| 6 | `06_visa_forged_stamp.jpg` | **forged visa stamp** | REVIEW — stamp boxed red |
+| 7 | `07_visa_mismatch.jpg` + `01` | cross-document | REJECT — visa names a different passport |
 
 - [ ] **Step 1: Write `scripts/make_samples.py`**
 
 ```python
-"""Generates synthetic clean and forged identity documents for the demo."""
+"""Generates synthetic clean and forged passports and visas for the SIH26188 demo."""
+import io
 import json
 import os
 import random
@@ -2723,7 +3347,7 @@ from PIL import Image, ImageDraw, ImageFont
 from app.engines.mrz import check_digit
 
 OUT = "data/samples"
-W, H = 900, 560
+W, H = 1000, 640
 
 def _font(size: int):
     for path in ("/System/Library/Fonts/Supplemental/Arial.ttf",
@@ -2741,164 +3365,411 @@ def _mono(size: int):
             return ImageFont.truetype(path, size)
     return ImageFont.load_default()
 
-def build_mrz(surname: str, given: str, doc_no: str, nat: str,
+def build_mrz(doc_type: str, surname: str, given: str, doc_no: str, nat: str,
               dob: str, sex: str, expiry: str) -> tuple[str, str]:
     name_field = f"{surname}<<{given.replace(' ', '<')}".ljust(39, "<")[:39]
-    l1 = f"P<{nat}{name_field}"
+    l1 = f"{doc_type}<{nat}{name_field}"
     doc = doc_no.ljust(9, "<")[:9]
     personal = "<" * 14
-    l2 = (f"{doc}{check_digit(doc)}{nat}{dob}{check_digit(dob)}{sex}"
-          f"{expiry}{check_digit(expiry)}{personal}{check_digit(personal)}")
-    composite = doc + str(check_digit(doc)) + dob + str(check_digit(dob)) + \
-                expiry + str(check_digit(expiry)) + personal + str(check_digit(personal))
-    l2 += str(check_digit(composite))
-    return l1, l2.ljust(44, "<")[:44]
+    body = (f"{doc}{check_digit(doc)}{nat}{dob}{check_digit(dob)}{sex}"
+            f"{expiry}{check_digit(expiry)}{personal}{check_digit(personal)}")
+    composite = (doc + str(check_digit(doc)) + dob + str(check_digit(dob)) +
+                 expiry + str(check_digit(expiry)) + personal + str(check_digit(personal)))
+    return l1, (body + str(check_digit(composite))).ljust(44, "<")[:44]
 
-def draw_passport(path: str, *, surname, given, doc_no, nat, dob, sex, expiry,
-                  portrait=True, mrz_override=None, noise=True):
-    img = Image.new("RGB", (W, H), (238, 236, 228))
+def _noise(img: Image.Image, seed: int = 7) -> None:
+    px = img.load()
+    rng = random.Random(seed)
+    for _ in range(img.width * img.height // 10):
+        x, y = rng.randrange(img.width), rng.randrange(img.height)
+        r, g, b = px[x, y]
+        j = rng.randint(-8, 8)
+        px[x, y] = (max(0, min(255, r + j)), max(0, min(255, g + j)), max(0, min(255, b + j)))
+
+# Field layout shared by drawing and tampering, so a retyped field lands exactly in place.
+FIELD_X, FIELD_Y0, FIELD_STEP = 300, 120, 58
+FIELDS = ["Surname", "Given names", "Passport No.", "Nationality",
+          "Date of birth", "Sex", "Date of expiry"]
+
+def field_value_box(index: int) -> tuple[int, int, int, int]:
+    y = FIELD_Y0 + index * FIELD_STEP + 18
+    return FIELD_X - 4, y - 2, 420, 34
+
+def _draw_portrait(d: ImageDraw.ImageDraw, skin=(222, 190, 165), bg=(205, 205, 200)):
+    d.rectangle([50, 120, 250, 380], fill=bg)
+    d.ellipse([85, 150, 215, 320], fill=skin)
+    d.ellipse([115, 210, 137, 226], fill=(40, 30, 25))
+    d.ellipse([163, 210, 185, 226], fill=(40, 30, 25))
+    d.arc([125, 250, 175, 285], start=10, end=170, fill=(120, 70, 60), width=4)
+
+def draw_passport(p: dict, mrz_override=None) -> Image.Image:
+    img = Image.new("RGB", (W, H), (236, 234, 224))
     d = ImageDraw.Draw(img)
-    d.rectangle([0, 0, W, 70], fill=(24, 54, 98))
-    d.text((24, 22), "REPUBLIC OF UTOPIA  ·  PASSPORT", font=_font(26), fill="white")
+    d.rectangle([0, 0, W, 80], fill=(22, 52, 96))
+    d.text((28, 22), "REPUBLIC OF UTOPIA   ·   PASSPORT", font=_font(30), fill="white")
+    values = [p["surname"], p["given"], p["doc_no"], p["nat"],
+              f"{p['dob'][4:6]}/{p['dob'][2:4]}/19{p['dob'][0:2]}", p["sex"],
+              f"{p['expiry'][4:6]}/{p['expiry'][2:4]}/20{p['expiry'][0:2]}"]
+    for i, (label, value) in enumerate(zip(FIELDS, values)):
+        y = FIELD_Y0 + i * FIELD_STEP
+        d.text((FIELD_X, y), label.upper(), font=_font(14), fill=(110, 110, 110))
+        d.text((FIELD_X, y + 18), str(value), font=_font(26), fill=(15, 15, 15))
+    _draw_portrait(d)
+    l1, l2 = mrz_override or build_mrz("P", p["surname"], p["given"], p["doc_no"],
+                                       p["nat"], p["dob"], p["sex"], p["expiry"])
+    d.rectangle([0, H - 110, W, H], fill=(250, 250, 246))
+    d.text((28, H - 94), l1, font=_mono(24), fill=(10, 10, 10))
+    d.text((28, H - 52), l2, font=_mono(24), fill=(10, 10, 10))
+    _noise(img)
+    return img
 
-    rows = [("Surname", surname), ("Given names", given), ("Passport No.", doc_no),
-            ("Nationality", nat), ("Date of birth", f"{dob[4:6]}/{dob[2:4]}/19{dob[0:2]}"),
-            ("Sex", sex), ("Date of expiry", f"{expiry[4:6]}/{expiry[2:4]}/20{expiry[0:2]}")]
-    y = 110
-    for label, value in rows:
-        d.text((250, y), label.upper(), font=_font(13), fill=(110, 110, 110))
-        d.text((250, y + 17), str(value), font=_font(21), fill=(15, 15, 15))
-        y += 52
+def draw_visa(p: dict, *, visa_passport_no: str | None = None,
+              stamp: bool = True) -> Image.Image:
+    img = Image.new("RGB", (W, H), (242, 238, 226))
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, W, 80], fill=(96, 30, 44))
+    d.text((28, 22), "REPUBLIC OF UTOPIA   ·   ENTRY VISA", font=_font(30), fill="white")
+    doc_no = visa_passport_no or p["doc_no"]
+    rows = [("Holder", f"{p['given']} {p['surname']}"), ("Passport No.", doc_no),
+            ("Nationality", p["nat"]), ("Visa type", "TOURIST - SINGLE ENTRY"),
+            ("Valid until", "31/12/2030")]
+    for i, (label, value) in enumerate(rows):
+        y = FIELD_Y0 + i * 64
+        d.text((FIELD_X, y), label.upper(), font=_font(14), fill=(110, 110, 110))
+        d.text((FIELD_X, y + 18), value, font=_font(26), fill=(15, 15, 15))
+    _draw_portrait(d)
+    if stamp:
+        d.ellipse([720, 330, 930, 470], outline=(30, 60, 170), width=6)
+        d.text((752, 382), "ENTRY  2026", font=_font(26), fill=(30, 60, 170))
+    l1, l2 = build_mrz("V", p["surname"], p["given"], doc_no, p["nat"],
+                       p["dob"], p["sex"], p["expiry"])
+    d.rectangle([0, H - 110, W, H], fill=(250, 250, 246))
+    d.text((28, H - 94), l1, font=_mono(24), fill=(10, 10, 10))
+    d.text((28, H - 52), l2, font=_mono(24), fill=(10, 10, 10))
+    _noise(img, seed=11)
+    return img
 
-    if portrait:
-        # A crude synthetic face: oval head, two eyes, a mouth. Enough for a detector.
-        d.rectangle([48, 110, 218, 330], fill=(205, 205, 200))
-        d.ellipse([78, 140, 188, 290], fill=(222, 190, 165))
-        d.ellipse([104, 195, 122, 210], fill=(40, 30, 25))
-        d.ellipse([144, 195, 162, 210], fill=(40, 30, 25))
-        d.arc([110, 230, 156, 262], start=10, end=170, fill=(120, 70, 60), width=3)
+def save_issued(img: Image.Image, path: str, quality: int = 70) -> None:
+    """The genuine document's compression history."""
+    img.save(path, "JPEG", quality=quality)
 
-    l1, l2 = mrz_override or build_mrz(surname, given, doc_no, nat, dob, sex, expiry)
-    d.rectangle([0, H - 100, W, H], fill=(250, 250, 248))
-    d.text((24, H - 86), l1, font=_mono(21), fill=(10, 10, 10))
-    d.text((24, H - 50), l2, font=_mono(21), fill=(10, 10, 10))
+def reload(path: str) -> Image.Image:
+    with Image.open(path) as im:
+        return im.convert("RGB").copy()
 
-    if noise:
-        px = img.load()
-        rng = random.Random(7)
-        for _ in range(W * H // 12):
-            x, y0 = rng.randrange(W), rng.randrange(H)
-            r, g, b = px[x, y0]
-            j = rng.randint(-9, 9)
-            px[x, y0] = (max(0, min(255, r + j)), max(0, min(255, g + j)),
-                         max(0, min(255, b + j)))
-
-    img.save(path, "JPEG", quality=88)
+def retype_field(img: Image.Image, index: int, new_value: str) -> Image.Image:
+    """What a forger does in an image editor: paint over a field, type a new value."""
+    d = ImageDraw.Draw(img)
+    x, y, w, h = field_value_box(index)
+    d.rectangle([x, y, x + w, y + h], fill=(236, 234, 224))
+    d.text((FIELD_X, y + 2), new_value, font=_font(26), fill=(15, 15, 15))
     return img
 
 BASE = dict(surname="ERIKSSON", given="ANNA MARIA", doc_no="L898902C3",
             nat="UTO", dob="740812", sex="F", expiry="301231")
+ANNA = {"full_name": "Anna Maria Eriksson", "dob": "1974-08-12",
+        "passport_no": "L898902C3", "nationality": "UTO",
+        "email": "anna.eriksson@gmail.com", "phone": "9876543210"}
 
 def main() -> None:
     os.makedirs(OUT, exist_ok=True)
-    manifest = []
+    m = []
 
-    # 1. Clean genuine document
-    draw_passport(f"{OUT}/01_clean.jpg", **BASE)
-    manifest.append({"file": "01_clean.jpg", "expect": "CLEAR",
-                     "claimed": {"full_name": "Anna Maria Eriksson", "dob": "1974-08-12",
-                                 "email": "anna.eriksson@gmail.com", "phone": "9876543210"},
-                     "story": "Genuine document, matching applicant."})
+    # 1. Genuine passport
+    save_issued(draw_passport(BASE), f"{OUT}/01_clean_passport.jpg")
+    m.append({"files": {"document": "01_clean_passport.jpg"}, "claimed": ANNA,
+              "expect": "CLEAR", "attack": "none",
+              "story": "Genuine passport, applicant details match."})
 
-    # 2. MRZ check digit tampered — the document number was altered after issue
-    l1, l2 = build_mrz(**BASE)
+    # 2. MRZ digit altered - the check digit no longer agrees
+    l1, l2 = build_mrz("P", **{k: BASE[k] for k in ("surname", "given", "doc_no",
+                                                     "nat", "dob", "sex", "expiry")})
     bad = l2[:3] + ("9" if l2[3] != "9" else "7") + l2[4:]
-    draw_passport(f"{OUT}/02_mrz_tampered.jpg", **BASE, mrz_override=(l1, bad))
-    manifest.append({"file": "02_mrz_tampered.jpg", "expect": "REVIEW/REJECT",
-                     "claimed": {"full_name": "Anna Maria Eriksson"},
-                     "story": "Passport number digit altered; MRZ check digit no longer agrees."})
+    save_issued(draw_passport(BASE, mrz_override=(l1, bad)), f"{OUT}/02_mrz_tampered.jpg")
+    m.append({"files": {"document": "02_mrz_tampered.jpg"}, "claimed": ANNA,
+              "expect": "REVIEW/REJECT", "attack": "altered passport number",
+              "story": "One digit of the passport number changed. ICAO check digit fails."})
 
-    # 3. Spliced portrait — a different photo pasted over the original
-    img = draw_passport(f"{OUT}/03_photo_spliced.jpg", **BASE)
+    # 3. DOB retyped - the centerpiece case
+    path = f"{OUT}/03_dob_retyped.jpg"
+    save_issued(draw_passport(BASE), path)
+    retype_field(reload(path), FIELDS.index("Date of birth"), "12/08/1994") \
+        .save(path, "JPEG", quality=97)
+    m.append({"files": {"document": "03_dob_retyped.jpg"},
+              "claimed": dict(ANNA, dob="1994-08-12"),
+              "expect": "REVIEW", "attack": "altered DOB",
+              "story": "Applicant made themself 20 years younger. The DOB field has a "
+                       "different compression history from every other field - boxed red. "
+                       "The MRZ still encodes the true 1974 DOB."})
+
+    # 4. Photograph substituted
+    path = f"{OUT}/04_photo_substituted.jpg"
+    save_issued(draw_passport(BASE), path)
+    img = reload(path)
+    _draw_portrait(ImageDraw.Draw(img), skin=(200, 160, 130), bg=(190, 198, 214))
+    img.save(path, "JPEG", quality=97)
+    m.append({"files": {"document": "04_photo_substituted.jpg"}, "claimed": ANNA,
+              "expect": "REVIEW", "attack": "altered photograph",
+              "story": "Portrait replaced after issue. Photo region is a compression outlier."})
+
+    # 5. Name retyped
+    path = f"{OUT}/05_name_retyped.jpg"
+    save_issued(draw_passport(BASE), path)
+    retype_field(reload(path), FIELDS.index("Surname"), "SHARMA") \
+        .save(path, "JPEG", quality=97)
+    m.append({"files": {"document": "05_name_retyped.jpg"},
+              "claimed": dict(ANNA, full_name="Anna Maria Sharma"),
+              "expect": "REVIEW/REJECT", "attack": "altered name",
+              "story": "Surname retyped. Field boxed red, and the MRZ still says ERIKSSON."})
+
+    # 6. Visa with forged stamp
+    path = f"{OUT}/06_visa_forged_stamp.jpg"
+    save_issued(draw_visa(BASE, stamp=False), path)
+    img = reload(path)
     d = ImageDraw.Draw(img)
-    d.rectangle([48, 110, 218, 330], fill=(190, 200, 215))
-    d.ellipse([80, 145, 186, 288], fill=(238, 205, 178))
-    d.ellipse([106, 198, 122, 212], fill=(20, 20, 20))
-    d.ellipse([146, 198, 162, 212], fill=(20, 20, 20))
-    img.save(f"{OUT}/03_photo_spliced.jpg", "JPEG", quality=97)
-    manifest.append({"file": "03_photo_spliced.jpg", "expect": "REVIEW/REJECT",
-                     "claimed": {"full_name": "Anna Maria Eriksson"},
-                     "story": "Portrait replaced. Fresh paste has a different "
-                              "compression history — ELA lights it up."})
+    d.ellipse([720, 330, 930, 470], outline=(30, 60, 170), width=6)
+    d.text((752, 382), "ENTRY  2026", font=_font(26), fill=(30, 60, 170))
+    img.save(path, "JPEG", quality=97)
+    save_issued(draw_passport(BASE), f"{OUT}/06_passport_for_visa.jpg")
+    m.append({"files": {"document": "06_passport_for_visa.jpg",
+                        "visa": "06_visa_forged_stamp.jpg"},
+              "claimed": ANNA, "expect": "REVIEW", "attack": "forged visa stamp",
+              "story": "Entry stamp added to the visa after issue. Stamp region boxed red."})
 
-    # 4. Someone else's document — name on the ID is not the applicant's
-    draw_passport(f"{OUT}/04_stolen_document.jpg", **BASE)
-    manifest.append({"file": "04_stolen_document.jpg", "expect": "REJECT",
-                     "claimed": {"full_name": "Bartholomew Cubbins", "dob": "1990-01-01"},
-                     "story": "Applicant submits a real document belonging to another person. "
-                              "OCR finds the claimed name nowhere on it."})
-
-    # 5. Digitally generated — no camera EXIF, no sensor noise, editor-clean
-    draw_passport(f"{OUT}/05_digitally_generated.jpg", **BASE, noise=False)
-    manifest.append({"file": "05_digitally_generated.jpg", "expect": "REVIEW",
-                     "claimed": {"full_name": "Anna Maria Eriksson"},
-                     "story": "Wholly synthetic document: no camera metadata, "
-                              "uniform synthetic noise profile."})
-
-    # 6. Synthetic identity — plausible document, fabricated person
-    draw_passport(f"{OUT}/06_synthetic_identity.jpg", **BASE)
-    manifest.append({"file": "06_synthetic_identity.jpg", "expect": "REJECT",
-                     "claimed": {"full_name": "Asdf Qwerty", "dob": "2025-04-01",
-                                 "aadhaar": "999999999999", "email": "zx82nq@mailinator.com",
-                                 "phone": "1234567890"},
-                     "story": "Every claimed field is fabricated: keyboard-mash name, "
-                              "impossible DOB, repdigit Aadhaar, disposable email, "
-                              "sequential phone."})
+    # 7. Visa issued against a different passport
+    save_issued(draw_visa(BASE, visa_passport_no="X47281956"), f"{OUT}/07_visa_mismatch.jpg")
+    m.append({"files": {"document": "01_clean_passport.jpg",
+                        "visa": "07_visa_mismatch.jpg"},
+              "claimed": ANNA, "expect": "REJECT", "attack": "cross-document mismatch",
+              "story": "Both documents are individually flawless. The visa was issued "
+                       "against passport X47281956; the passport presented is L898902C3."})
 
     with open(f"{OUT}/manifest.json", "w") as fh:
-        json.dump(manifest, fh, indent=2)
-    print(f"Wrote {len(manifest)} samples to {OUT}/")
+        json.dump(m, fh, indent=2)
+    print(f"Wrote {len(m)} cases to {OUT}/")
 
 if __name__ == "__main__":
     main()
 ```
 
+**Note on case 6:** the pipeline runs `fieldforensics` on the visa as well as the passport (Task 13, step 7), and when the visa has a suspect region its annotated image becomes the evidence shown in the UI. That is what surfaces the forged stamp.
+
 - [ ] **Step 2: Generate and eyeball the output**
 
 Run: `./.venv/bin/python scripts/make_samples.py && ls data/samples/`
-Expected: six `.jpg` files plus `manifest.json`. **Open each image.** They must look like plausible documents on a projector — if they look like obvious placeholder rectangles, spend twenty minutes improving `draw_passport`, because judges see these images before they see your code.
+Expected: image files plus `manifest.json`. **Open every image.** They must look like plausible documents on a projector. If they look like grey placeholder boxes, spend twenty minutes on `draw_passport` — judges see these images before they see your code.
 
-- [ ] **Step 3: Run every sample through the pipeline and check the verdicts**
+- [ ] **Step 3: Write `scripts/check_samples.py` and run every case**
 
-```bash
-./.venv/bin/python - <<'PY'
+```python
+"""Runs every manifest case through the pipeline and prints verdict vs expectation."""
 import json
-from app import db, config
+import os
+from app import config, db
 from app.models import ScreeningInput
 from app.pipeline import screen
-db.init_db(config.DB_PATH)
-for case in json.load(open("data/samples/manifest.json")):
-    r = screen(ScreeningInput(claimed=case["claimed"],
-                              doc_path=f"data/samples/{case['file']}"), config.DB_PATH)
-    print(f"{case['file']:32s} got={r.band:7s} score={r.score:3d}  expect={case['expect']}")
-    for s in r.signals:
-        if s.severity in ("high", "critical"):
-            print(f"    - [{s.severity}] {s.code}")
-PY
+
+def main() -> None:
+    db_path = "samples_check.db"
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    db.init_db(db_path)
+    for case in json.load(open("data/samples/manifest.json")):
+        f = case["files"]
+        inp = ScreeningInput(
+            claimed=case["claimed"],
+            doc_path=f"data/samples/{f['document']}",
+            visa_path=f"data/samples/{f['visa']}" if "visa" in f else None,
+        )
+        r = screen(inp, db_path)
+        name = f.get("visa", f["document"])
+        print(f"{name:30s} got={r.band:7s} score={r.score:3d}  expect={case['expect']}")
+        for s in r.signals:
+            if s.severity in ("medium", "high", "critical"):
+                print(f"      [{s.severity:8s}] {s.code}")
+        if r.evidence_path:
+            print(f"      evidence -> {r.evidence_path}")
+    os.remove(db_path)
+
+if __name__ == "__main__":
+    main()
 ```
 
-Expected: every sample lands on or adjacent to its `expect` band. **This is the calibration loop.** If `01_clean.jpg` does not come out CLEAR, your thresholds are too tight and your demo will flag your own clean document in front of judges — fix that before anything else. Return to Task 8 Step 5 and retune `ELA_SUSPICIOUS` / `NOISE_SPREAD_MAX` using the numbers these samples produce.
+Run: `./.venv/bin/python scripts/check_samples.py`
+
+**This is the calibration loop, and the most important step in Phase 4.**
+
+- `01_clean_passport.jpg` **must** come out CLEAR. If your own clean document flags, the demo dies on stage — fix that before anything else.
+- `03_dob_retyped.jpg` **must** produce `FF_FIELD_TAMPERED`, and opening its evidence image must show the DOB boxed red. This is the demo.
+- Every other case should land on or adjacent to its `expect`.
+
+If they don't, return to Task 8 Step 5 and Task 10 Step 7 and retune thresholds using the numbers these samples produce. Record final values in the README.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add scripts/make_samples.py data/samples/.gitkeep
-git commit -m "feat: synthetic sample case generator covering six fraud types"
+git add scripts/make_samples.py scripts/check_samples.py data/samples/.gitkeep
+git commit -m "feat: passport and visa sample generator covering every PS attack type"
 ```
 
 ---
 
-## Task 15: Case report
+## Task 17: Batch screening for high volumes · stretch, cut second
+
+**Why:** the PS states "high volumes of documents make manual inspection inefficient." A single-document UI doesn't answer that line. A batch run that screens a folder and ranks the results — highest risk first, so an officer reads the ten worst instead of all thousand — does.
+
+**Files:**
+- Create: `scripts/batch_screen.py`, `tests/test_batch.py`
+- Modify: `app/db.py` (add `stats`), `app/main.py` (add `GET /api/stats`)
+
+**Interfaces:**
+- Consumes: `pipeline.screen`, `db`
+- Produces:
+  - `batch_screen.screen_manifest(rows: list[dict], sample_dir: str, db_path: str) -> list[dict]` — one result row per input, sorted by descending score
+  - `db.stats(path: str) -> dict` — `{"total": int, "CLEAR": int, "REVIEW": int, "REJECT": int}`
+  - `GET /api/stats`
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/test_batch.py
+import pytest
+from app import db
+from scripts import batch_screen
+
+@pytest.fixture
+def dbfile(tmp_path):
+    p = str(tmp_path / "b.db")
+    db.init_db(p)
+    return p
+
+def test_results_are_sorted_highest_risk_first(dbfile, tmp_path):
+    rows = [
+        {"claimed": {"full_name": "Jonathan Brewster"}, "files": {}},
+        {"claimed": {"full_name": "Viktor Anatolyevich Petrov"}, "files": {}},
+        {"claimed": {"full_name": "Asdf Qwerty", "email": "x@mailinator.com"}, "files": {}},
+    ]
+    out = batch_screen.screen_manifest(rows, str(tmp_path), dbfile)
+    scores = [r["score"] for r in out]
+    assert scores == sorted(scores, reverse=True)
+    assert out[0]["band"] == "REJECT"
+
+def test_every_input_produces_one_row(dbfile, tmp_path):
+    rows = [{"claimed": {"full_name": f"Person Number{i}"}, "files": {}} for i in range(4)]
+    assert len(batch_screen.screen_manifest(rows, str(tmp_path), dbfile)) == 4
+
+def test_stats_counts_bands(dbfile, tmp_path):
+    rows = [{"claimed": {"full_name": "Viktor Anatolyevich Petrov"}, "files": {}},
+            {"claimed": {"full_name": "Jonathan Brewster"}, "files": {}}]
+    batch_screen.screen_manifest(rows, str(tmp_path), dbfile)
+    st = db.stats(dbfile)
+    assert st["total"] == 2 and st["REJECT"] >= 1
+```
+
+Also create an empty `scripts/__init__.py` so `from scripts import batch_screen` resolves.
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `./.venv/bin/pytest tests/test_batch.py -v`
+Expected: FAIL — `ImportError: cannot import name 'batch_screen'`
+
+- [ ] **Step 3: Add `stats` to `app/db.py`**
+
+```python
+def stats(path: str) -> dict:
+    out = {"total": 0, "CLEAR": 0, "REVIEW": 0, "REJECT": 0}
+    with _conn(path) as con:
+        for row in con.execute("SELECT band, COUNT(*) AS n FROM cases GROUP BY band"):
+            out[row["band"]] = row["n"]
+            out["total"] += row["n"]
+    return out
+```
+
+- [ ] **Step 4: Write `scripts/batch_screen.py`**
+
+```python
+"""Screens many applications at once and ranks them highest-risk first.
+
+Usage: python -m scripts.batch_screen data/samples/manifest.json
+"""
+import csv
+import json
+import os
+import sys
+import time
+from app import config, db
+from app.models import ScreeningInput
+from app.pipeline import screen
+
+def screen_manifest(rows: list[dict], sample_dir: str, db_path: str) -> list[dict]:
+    results = []
+    for row in rows:
+        files = row.get("files", {})
+        path = lambda key: os.path.join(sample_dir, files[key]) if key in files else None
+        r = screen(ScreeningInput(claimed=row.get("claimed", {}),
+                                  doc_path=path("document"), visa_path=path("visa")),
+                   db_path)
+        top = next((s for s in r.signals if s.severity in ("critical", "high")), None)
+        results.append({
+            "case_id": r.case_id,
+            "applicant": row.get("claimed", {}).get("full_name", ""),
+            "score": r.score,
+            "band": r.band,
+            "top_reason": top.message if top else "",
+        })
+    return sorted(results, key=lambda x: x["score"], reverse=True)
+
+def main() -> None:
+    manifest = sys.argv[1] if len(sys.argv) > 1 else "data/samples/manifest.json"
+    db.init_db(config.DB_PATH)
+    rows = json.load(open(manifest))
+    started = time.perf_counter()
+    results = screen_manifest(rows, os.path.dirname(manifest), config.DB_PATH)
+    elapsed = time.perf_counter() - started
+
+    out = "batch_results.csv"
+    with open(out, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(results[0].keys()))
+        w.writeheader()
+        w.writerows(results)
+
+    print(f"Screened {len(results)} applications in {elapsed:.1f}s "
+          f"({elapsed / len(results):.2f}s each). Ranked results -> {out}")
+    for r in results[:10]:
+        print(f"  {r['score']:3d}  {r['band']:7s}  {r['applicant']}")
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 5: Add `GET /api/stats` to `app/main.py`**
+
+```python
+@app.get("/api/stats")
+def api_stats() -> dict:
+    return db.stats(config.DB_PATH)
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `./.venv/bin/pytest tests/test_batch.py -v`
+Expected: PASS, 3 passed
+
+- [ ] **Step 7: Measure throughput — you will be asked**
+
+Run: `./.venv/bin/python -m scripts.batch_screen`
+Write the "seconds per document" figure into the README and onto a slide. "Screens a passport in N seconds on a laptop, fully offline" is a concrete, defensible claim that directly answers the PS's volume line.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add scripts/__init__.py scripts/batch_screen.py app/db.py app/main.py tests/test_batch.py
+git commit -m "feat: batch screening ranked by risk, with band statistics endpoint"
+```
+
+---
+
+## Task 19 (optional): Case report
 
 **Files:**
 - Modify: `app/report.py` (replacing the Task 12 stub)
@@ -3048,7 +3919,7 @@ git commit -m "feat: printable analyst case report"
 
 ---
 
-## Task 16: Harden and rehearse
+## Task 18: Harden and rehearse
 
 **Files:**
 - Create: `README.md`, `run.sh`, `docs/DEMO_SCRIPT.md`, `docs/JUDGE_QA.md`
@@ -3097,45 +3968,54 @@ On a teammate's laptop: clone the repo, run `./run.sh`, open `localhost:8000`, s
 Structure the demo to 4 minutes, in this order. The ordering is deliberate: open with the strongest visual, close with the strongest engineering.
 
 ```markdown
-# Demo Script (4 minutes)
+# Demo Script — SIH26188 (4 minutes)
 
-## 0:00 — The problem (20s)
-"Onboarding fraud has three shapes: a forged document, a real document that
-isn't yours, and a person who doesn't exist. Most checkers catch the first.
-We catch all three, and we explain every decision."
+## 0:00 — The problem, in their words (20s)
+"Your problem statement names four forgeries: altered photographs, altered
+names, altered dates of birth, and forged visa stamps. And it names the real
+problem — volume. An officer can't inspect a thousand passports by eye.
+We'll catch all four, and show you exactly where each one is."
 
-## 0:20 — Case 1: clean document (30s)
-Upload `01_clean.jpg` with the matching applicant details.
-→ Green, CLEAR, low score. "This is what a genuine applicant looks like."
+## 0:20 — Case 1: genuine passport (20s)
+Upload `01_clean_passport.jpg` with matching details.
+-> Green, CLEAR. "This is what a genuine traveller looks like."
 
-## 0:50 — Case 2: tampered MRZ (60s)  ← STRONGEST MOMENT
+## 0:40 — Case 3: the altered DOB (70s)  <- THE MOMENT
+Upload `03_dob_retyped.jpg`.
+-> Evidence image appears. **The date-of-birth field is boxed in red.**
+Pause. Let the judges look at it.
+"Most systems tell you a document is suspicious. Ours tells you *which field*
+was changed. Every field on this page went through the same printing and
+compression. This one didn't — it was retyped afterwards. We compare each
+field against its own neighbours, so we need no database of genuine passports."
+Then point at the MRZ reason: "And the machine-readable zone still encodes
+the real 1974 birth date. The forger changed what a human reads, not what
+the machine reads."
+
+## 1:50 — Case 2: the MRZ check digit (40s)
 Upload `02_mrz_tampered.jpg`.
-→ REJECT, MRZ_DOCNUM_CHECKSUM_FAIL.
-Read the reason aloud: the printed number computes to one check digit,
-the document claims another.
-"This is not a guess. This is ICAO Doc 9303 arithmetic — the same check
-every border control system in the world runs."
+-> REJECT, MRZ_DOCNUM_CHECKSUM_FAIL. Read the reason aloud.
+"This isn't a guess. It's ICAO Doc 9303 arithmetic — the same check every
+border control system runs."
 
-## 1:50 — Case 3: someone else's document (45s)
-Upload `04_stolen_document.jpg` under the name Bartholomew Cubbins.
-→ REJECT, OCR_NAME_NOT_ON_DOCUMENT.
-"The document is completely genuine. The applicant is not its owner."
+## 2:30 — Cases 4 and 6: photograph and visa stamp (40s)
+Upload `04_photo_substituted.jpg` -> portrait boxed red.
+Upload `06` passport + forged-stamp visa -> stamp boxed red.
+"Photographs and visa stamps — the other two attacks in your statement.
+Same method, same explanation."
 
-## 2:35 — Case 4: synthetic identity (45s)
-Submit `06_synthetic_identity.jpg` with the fabricated field set.
-→ REJECT with five stacked reasons.
-Point at the repdigit Aadhaar: "999999999999 passes the Verhoeff checksum.
-We found that while testing our own validator, and added a rule for it."
+## 3:10 — Case 7: two perfect documents that disagree (30s)
+Upload `01` passport with `07_visa_mismatch.jpg`.
+-> REJECT, XDOC_PASSPORT_NO_MISMATCH.
+"Each document alone is flawless. Together they're impossible — this visa
+was issued to a different passport."
 
-## 3:20 — The system view (30s)
-Re-submit the same national ID under a different name.
-→ VEL_ID_REUSED_NEW_NAME fires.
-"No single-document check can catch this. This is why it's a screening
-system and not a file checker."
+## 3:40 — Volume (15s)
+Show the batch output ranked by risk. "N seconds a document, offline, on a
+laptop. The officer reads the top ten, not all thousand."
 
-## 3:50 — Close (10s)
-Open the case report. "Every decision is auditable, offline, and explainable.
-Eight engines, no black box."
+## 3:55 — Close (5s)
+"Every decision explainable. Every forgery located. No internet required."
 ```
 
 - [ ] **Step 4: Write `docs/JUDGE_QA.md`**
@@ -3156,8 +4036,9 @@ is a fraud decision a bank cannot use.
 We won't quote a number we can't defend. There is no public labelled forged-ID
 dataset we could ethically train or validate against in 24 hours. What we can
 show: every engine is unit-tested against known-correct vectors, and the ICAO
-check-digit and Verhoeff engines are exactly correct by construction, not
-statistically correct.
+check-digit engine is exactly correct by construction, not statistically correct.
+For the forensic engines we quote our measured detection rate on SIDTD
+(1,900 genuine + 1,900 forged documents) - and only that number.
 
 **"Couldn't ELA false-positive on a genuine document?"**
 Yes, and it does — on high-contrast text and non-JPEG sources. That's why
@@ -3170,10 +4051,29 @@ Every engine runs fault-isolated. A failure becomes a low-severity signal
 and a logged error; the applicant still gets a verdict. Try to break it —
 hand us any file you like.
 
+**"How does field-level detection actually work?"**
+Error Level Analysis per region. Re-compress the image and measure how much
+each field changes. Fields that went through the original production pipeline
+change little; a retyped field changes more. We use a median-based outlier test
+so the tampered field can't hide by skewing the average. No reference passport
+needed - each field is judged against its own neighbours.
+
+**"Why not train a deep learning model?"**
+We do use neural networks - OCR, face detection and face recognition all run
+pretrained models. We chose not to *train* a forgery classifier in 36 hours
+because there is no labelled Indian passport forgery dataset we could ethically
+use, and a border officer can't act on a verdict nobody can explain. Training on
+SIDTD is our clear next step.
+
+**"Where does your data come from?"**
+Never real documents. Our demo samples are generated from scratch. Validation
+uses SIDTD and MIDV-2020, the standard public research datasets of synthetic
+identity documents, built specifically because real ID data can't be shared.
+
 **"What would you build next?"**
-Liveness detection on the selfie, document-template matching against issuer
-specifications, and a feedback loop so confirmed analyst decisions retune
-the signal weights.
+A classifier trained on SIDTD alongside the explainable engines, liveness
+detection on the selfie, template matching against issuing-authority layouts,
+and integration with immigration case-management systems.
 
 **"Why no LLM?"**
 It runs fully offline with no API dependency. For a compliance system, that's
@@ -3206,13 +4106,31 @@ git commit -m "docs: demo script, judge Q&A, README, and one-command runner"
 
 ## Self-Review
 
-**Spec coverage.** The brief was "AI-Based Fake Identity & Document Screening System". Fake *document* detection: Tasks 2, 7, 8, 9, 10. Fake *identity* detection: Tasks 3, 4, 6. Screening *system* (intake, scoring, persistence, reporting, interface): Tasks 5, 11, 12, 13, 15. Demo readiness: Tasks 14, 16. No requirement is unassigned.
+**Spec coverage against SIH26188.** Every attack named in the problem statement has an owning engine and a scripted demo case:
 
-**Naming consistency, checked across tasks.** `Signal(code, engine, severity, message, weight_override, evidence)` is constructed identically in all eight engines. `run()` returns `list[Signal]` everywhere except `ocr.run()`, which returns `(list[Signal], list[str])` — this asymmetry is deliberate (OCR is the only engine that produces input for another engine) and `pipeline.py` handles it explicitly rather than through the generic `_safe` wrapper. `db.save_case` takes `doc_hash` as a trailing keyword in both its definition and all three call sites. `config.ENGINE_WEIGHTS` keys match the `engine=` string in every signal.
+| PS text | Engines | Demo case |
+|---|---|---|
+| "altered photographs" | T10 fieldforensics (portrait), T11 face | `04_photo_substituted` |
+| "altered names" | T2 mrz, T9 ocr, T10 fieldforensics | `05_name_retyped` |
+| "altered DOBs" | T2 mrz, T10 fieldforensics | `03_dob_retyped` ⭐ |
+| "visa stamps" | T10 fieldforensics (stamp regions) | `06_visa_forged_stamp` |
+| "manual verification time-consuming / human error" | T5 scoring, T15 explainable UI | every case |
+| "high volumes" | T17 batch + stats | batch run |
+| pitch: "matches the document holder's face" | T11 face | selfie upload |
+| pitch: "cross-document" | T12 crossdoc | `07_visa_mismatch` |
+| pitch: "evidence-backed report" | T10 annotate, T19 report | evidence image |
+
+**Interface consistency, checked across tasks.**
+- `ocr.run` returns a **3-tuple** `(signals, mrz_lines, boxes)`. Every consumer unpacks three: `pipeline._ocr_document`, the pipeline's visa branch, `scripts/tune_fields.py`, and every `tests/test_ocr.py` call.
+- `fieldforensics.run(path, ocr_boxes, portrait_box)` returns `(signals, regions)`; each region is `{"box", "label", "kind", "suspect", "score"}`, which is exactly what `annotate.draw_evidence` reads.
+- `ScreeningInput` has `visa_path`; `ScreeningResult` has `evidence_path` and serialises it. The API turns it into `evidence_url`; the frontend reads `evidence_url`.
+- Claimed-field keys are `full_name, dob, passport_no, nationality, email, phone, address` in the model, API form, frontend form, DB columns, velocity, crossdoc, samples and batch. No `aadhaar` or `pan` remains.
+- `config.ENGINE_WEIGHTS` has a key for every `engine=` string emitted, including `fieldforensics` and `crossdoc`.
 
 **Known soft spots, stated rather than hidden.**
-- Tamper thresholds are guesses until Task 14 Step 3 calibrates them against real samples. Task 8 Step 5 exists to close this and is explicitly deferred, not forgotten.
-- `test_cloned_region_is_detected` asserts only that the copy-move engine runs, not that it fires. Detecting clones in synthetic flat-gradient images is unreliable; asserting a real detection there would produce a flaky test that burns hackathon hours. The engine's true calibration happens in Task 14 against the actual sample documents.
-- The synthetic portraits drawn by `make_samples.py` may not trip YuNet, which is trained on real faces. If `FACE_NO_PORTRAIT_ON_DOC` fires on every sample, either paste a public-domain photographic face into the template or set `ENGINE_WEIGHTS["face"] = 0.0` and drop the face engine from the demo narrative. Decide this at Task 14, not on stage.
+- Tamper and field thresholds are estimates until Task 16 Step 3 calibrates them on real samples. Task 8 Step 5 and Task 10 Step 7 exist to close this, and are explicitly deferred rather than forgotten.
+- `test_cloned_region_is_detected` asserts only that copy-move runs, not that it fires. Asserting detection on a synthetic gradient would be flaky and burn hackathon hours; real calibration happens against the samples.
+- Synthetic drawn portraits may not trip YuNet, which is trained on photographs. If `FACE_NO_PORTRAIT_ON_DOC` fires on every sample, either composite a public-domain photographic face into the template, or set `ENGINE_WEIGHTS["face"] = 0.0` and drop face from the narrative. Decide at Task 16, never on stage. **Field-level portrait forensics does not depend on this** — if no face is detected, the portrait region simply isn't added, and text-field and stamp analysis continue.
+- RapidOCR may split or merge fields differently from the drawn layout. `fieldforensics` works on whatever boxes OCR returns, so this changes labels, not correctness — but check the evidence image by eye at Task 16.
 
-**Cut order, if you fall behind.** Task 10 (face) first, then Task 15 (report), then Task 9's secondary DOB/ID cross-checks. Never cut Tasks 2, 3, 5, or 16.
+**Cut order, if behind.** T12 crossdoc → T17 batch → T11 face → T19 report → T9's secondary DOB/number cross-checks. **Never cut** T2 mrz, T10 fieldforensics, T5 scoring, or T18 rehearsal.
