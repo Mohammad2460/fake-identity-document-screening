@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+cases.db
+.pytest_cache/
+data/uploads/
