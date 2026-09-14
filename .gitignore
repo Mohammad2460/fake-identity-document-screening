@@ -1,6 +1,14 @@
 .venv/
 __pycache__/
 *.pyc
-cases.db
 .pytest_cache/
+cases.db
+samples_check.db
+batch_results.csv
 data/uploads/
+data/evidence/
+data/samples/*
+!data/samples/.gitkeep
+models/*.onnx
+pip_install.log
+.superpowers/

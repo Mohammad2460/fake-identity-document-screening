@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+python-multipart
+pillow
+opencv-python
+rapidocr-onnxruntime
+pypdf
+rapidfuzz
+pytest
+httpx
