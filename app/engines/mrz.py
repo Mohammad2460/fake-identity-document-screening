@@ -53,6 +53,8 @@ _FIELD_CHECKS = [
 def run(mrz_lines: list[str], claimed: dict) -> list[Signal]:
     signals: list[Signal] = []
 
+    mrz_lines = [ln.strip().upper().replace(" ", "") for ln in mrz_lines]
+
     if len(mrz_lines) < 2 or len(mrz_lines[0]) < 44 or len(mrz_lines[1]) < 44:
         return [Signal(
             code="MRZ_MALFORMED", engine="mrz", severity="medium",
@@ -62,21 +64,21 @@ def run(mrz_lines: list[str], claimed: dict) -> list[Signal]:
 
     try:
         f = parse_td3(mrz_lines[0], mrz_lines[1])
+
+        for raw_key, cd_key, code, label in _FIELD_CHECKS:
+            raw = f[raw_key]
+            expected = check_digit(raw)
+            actual = f[cd_key]
+            if not actual.isdigit() or int(actual) != expected:
+                signals.append(Signal(
+                    code=code, engine="mrz", severity="high",
+                    message=(f"MRZ {label} check digit is {actual}, but the printed value "
+                             f"{raw!r} computes to {expected}. Field was altered."),
+                    evidence={"field": raw, "expected": expected, "found": actual},
+                ))
     except ValueError as e:
         return [Signal(code="MRZ_MALFORMED", engine="mrz", severity="medium",
                        message=f"MRZ contains invalid characters: {e}")]
-
-    for raw_key, cd_key, code, label in _FIELD_CHECKS:
-        raw = f[raw_key]
-        expected = check_digit(raw)
-        actual = f[cd_key]
-        if not actual.isdigit() or int(actual) != expected:
-            signals.append(Signal(
-                code=code, engine="mrz", severity="high",
-                message=(f"MRZ {label} check digit is {actual}, but the printed value "
-                         f"{raw!r} computes to {expected}. Field was altered."),
-                evidence={"field": raw, "expected": expected, "found": actual},
-            ))
 
     claimed_name = (claimed.get("full_name") or "").strip().upper()
     if claimed_name:

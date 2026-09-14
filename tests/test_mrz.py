@@ -40,3 +40,16 @@ def test_name_mismatch_against_claimed_identity():
 def test_malformed_input_does_not_raise():
     signals = mrz.run(["garbage"], {})
     assert "MRZ_MALFORMED" in [s.code for s in signals]
+
+def test_lowercase_characters_are_normalised():
+    lower_l2 = L2.lower()
+    signals = mrz.run([L1, lower_l2], {"full_name": "ANNA MARIA ERIKSSON"})
+    assert not [s for s in signals if s.severity in ("high", "critical")]
+
+def test_invalid_character_returns_malformed_not_raise():
+    bad_l2 = "L898902C#6UTO7408122F1204159ZE184226B<<<<<10"
+    signals = mrz.run([L1, bad_l2], {})
+    codes = [s.code for s in signals]
+    assert codes == ["MRZ_MALFORMED"]
+    assert signals[0].severity == "medium"
+    assert "#" in signals[0].message
