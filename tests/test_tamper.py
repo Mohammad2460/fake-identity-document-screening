@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import pytest
 from PIL import Image
@@ -30,13 +31,26 @@ def test_ela_map_matches_image_shape(photo_like):
 def test_spliced_region_raises_ela_score(photo_like, spliced):
     assert tamper.ela_score(spliced) > tamper.ela_score(photo_like)
 
-def test_cloned_region_is_detected(tmp_path, photo_like):
-    arr = np.array(Image.open(photo_like))
-    arr[10:70, 10:70] = arr[150:210, 150:210]   # clone a patch
-    p = tmp_path / "cloned.jpg"
-    Image.fromarray(arr).save(p, "JPEG", quality=95)
-    score, matches = tamper.copy_move_score(str(p))
-    assert matches >= 0        # engine runs and reports
+def test_cloned_region_is_detected(tmp_path):
+    """A gradient has too few distinctive keypoints for ORB; use random texture instead,
+    and compare a cloned image against an un-cloned control of the same texture."""
+    rng = np.random.default_rng(3)
+    tex = rng.integers(0, 255, (320, 320, 3), dtype=np.uint8)
+    tex = cv2.GaussianBlur(tex, (3, 3), 0)
+
+    control_p = tmp_path / "control.jpg"
+    Image.fromarray(tex).save(control_p, "JPEG", quality=95)
+
+    cloned = tex.copy()
+    cloned[200:290, 200:290] = tex[0:90, 0:90]   # clone a 90x90 patch >120px away
+    cloned_p = tmp_path / "cloned.jpg"
+    Image.fromarray(cloned).save(cloned_p, "JPEG", quality=95)
+
+    _, control_matches = tamper.copy_move_score(str(control_p))
+    _, cloned_matches = tamper.copy_move_score(str(cloned_p))
+
+    assert cloned_matches >= tamper.CLONE_MATCH_MIN
+    assert cloned_matches > control_matches
 
 def test_run_returns_signals_for_valid_image(photo_like):
     signals = tamper.run(photo_like)
