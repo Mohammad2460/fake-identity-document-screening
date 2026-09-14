@@ -8,6 +8,14 @@ def test_reordered_name_still_matches():
     signals = watchlist.run({"full_name": "Petrov Viktor Anatolyevich"})
     assert "WL_MATCH" in [s.code for s in signals]
 
+def test_uppercase_exact_name_still_matches():
+    signals = watchlist.run({"full_name": "VIKTOR ANATOLYEVICH PETROV"})
+    assert "WL_MATCH" in [s.code for s in signals]
+
+def test_uppercase_reordered_name_still_matches():
+    signals = watchlist.run({"full_name": "PETROV VIKTOR ANATOLYEVICH"})
+    assert "WL_MATCH" in [s.code for s in signals]
+
 def test_minor_misspelling_matches():
     signals = watchlist.run({"full_name": "Dmitri Sokolovv"})
     assert "WL_MATCH" in [s.code for s in signals]

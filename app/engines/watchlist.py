@@ -1,6 +1,7 @@
 """Fuzzy screening of the claimed name against a sanctions / PEP list."""
 import csv
 import functools
+import rapidfuzz
 from rapidfuzz import fuzz, process
 from app.models import Signal
 
@@ -19,7 +20,8 @@ def run(claimed: dict, path: str = "data/watchlist.csv") -> list[Signal]:
 
     entries = load_watchlist(path)
     names = [e["name"] for e in entries]
-    best = process.extractOne(name, names, scorer=fuzz.token_sort_ratio)
+    best = process.extractOne(name, names, scorer=fuzz.token_sort_ratio,
+                              processor=rapidfuzz.utils.default_process)
     if best is None:
         return [Signal(code="WL_NO_MATCH", engine="watchlist", severity="info",
                        message="No sanctions or PEP list entry resembles this name.")]
