@@ -39,13 +39,13 @@ Prove the toolchain works before betting 34 hours on it.
 
 | Task | What | Status |
 |---|---|---|
-| T0 | Skeleton, deps, `/health` boots, risky imports verified | 🟡 code written, pip install running |
-| T1 | `Signal` model + scoring config | 🟡 code written, tests not yet run |
+| T0 | Skeleton, deps, `/health` boots, risky imports verified | ✅ |
+| T1 | `Signal` model + scoring config | ✅ |
 
 **Gate:**
-- [ ] `./.venv/bin/pytest -v` green
-- [ ] `curl localhost:8000/health` → `{"status":"ok"}`
-- [ ] T0 Step 3 printed `True True` for the OpenCV face API — **if `False False`, mark T11 ❌ now**
+- [x] `./.venv/bin/pytest -v` green
+- [x] `curl localhost:8000/health` → `{"status":"ok"}`
+- [x] T0 Step 3 printed `True True` for the OpenCV face API — **if `False False`, mark T11 ❌ now**
 
 ---
 
@@ -55,15 +55,15 @@ A complete, demoable screener with **zero image processing**. This is your insur
 
 | Task | What | Status |
 |---|---|---|
-| T2 | **MRZ engine** — ICAO 9303 check digits ⭐ | 🟡 code extracted from plan, tests not yet run |
-| T3 | Identity engine — synthetic-identity heuristics | 🟡 code extracted from plan, tests not yet run |
-| T4 | Watchlist — fuzzy sanctions match | 🟡 code extracted from plan, tests not yet run |
-| T5 | Scoring — decaying weights, critical floor | 🟡 code extracted from plan, tests not yet run |
-| T6 | SQLite persistence + velocity engine | 🟡 code extracted from plan, tests not yet run |
+| T2 | **MRZ engine** — ICAO 9303 check digits ⭐ | ✅ |
+| T3 | Identity engine — synthetic-identity heuristics | ✅ |
+| T4 | Watchlist — fuzzy sanctions match | ✅ |
+| T5 | Scoring — decaying weights, critical floor | ✅ |
+| T6 | SQLite persistence + velocity engine | ✅ |
 
 **Gate:**
 - [ ] Full suite green
-- [ ] T5 hand-check: one `high` → REVIEW, one `critical` → REJECT
+- [x] T5 hand-check: one `high` → REVIEW, one `critical` → REJECT
 
 If everything after this fails, you can still demo a real product. Nothing later may destabilise it.
 
@@ -75,7 +75,7 @@ The computer vision. **T10 is the centerpiece — protect its time.**
 
 | Task | What | Status |
 |---|---|---|
-| T7 | Metadata — EXIF / PDF provenance | ⬜ |
+| T7 | Metadata — EXIF / PDF provenance | 🟡 subagent implementing |
 | T8 | Tamper — whole-image ELA, copy-move, noise | ⬜ |
 | T9 | OCR — text + **bounding boxes** (T10 depends on the boxes) | ⬜ |
 | T10 | **Field-level forensics** — which field was altered ⭐⭐ | ⬜ |
@@ -198,7 +198,9 @@ Append one line per completed task: `hh:mm — T<n> done — note`
 
 ```
 2026-09-15 — Work happens on git branch `build` (not master).
-2026-09-15 — T0-T6 code written; waiting on `pip install -r requirements.txt` to finish before running pytest.
+2026-09-15 — Deps installed (opencv-python 5.0, face API present). T0-T6: 45/45 tests pass. Fixed plan bug: phone 1234567890 was not detected as fake.
+2026-09-15 — Subagent execution ledger: `.superpowers/sdd/2026-09-15-sih26188-document-screening/progress.md` (git-ignored; detailed per-task record).
+2026-09-15 — ✅ PHASE 0 + PHASE 1 COMPLETE. T0-T6 reviewed and approved. Demoable rules-core screener exists.
 ```
 
 ### Resume instructions for a new session
