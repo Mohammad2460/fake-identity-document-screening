@@ -100,10 +100,11 @@ def run(claimed: dict) -> list[Signal]:
                             message=f"Date of birth {dob!r} is not a recognised date format."))
         else:
             age = (date.today() - d).days / 365.25
-            if age < 18 or age > 110:
+            if age < 0 or age > 110:
                 s.append(Signal(
                     code="ID_DOB_IMPLAUSIBLE", engine="identity", severity="high",
-                    message=f"Date of birth implies an age of {age:.0f}, outside 18-110.",
+                    message=f"Date of birth implies an age of {age:.0f}, which is either "
+                            f"in the future or older than 110 years.",
                     evidence={"dob": dob, "age": round(age, 1)},
                 ))
     return s

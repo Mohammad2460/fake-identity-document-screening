@@ -18,8 +18,11 @@ def test_disposable_email_flagged():
     assert "ID_DISPOSABLE_EMAIL" in [s.code for s in signals]
 
 def test_implausible_dob_flagged():
-    assert "ID_DOB_IMPLAUSIBLE" in [s.code for s in identity.run({"dob": "2025-01-01"})]
+    assert "ID_DOB_IMPLAUSIBLE" in [s.code for s in identity.run({"dob": "2031-01-01"})]
     assert "ID_DOB_IMPLAUSIBLE" in [s.code for s in identity.run({"dob": "1890-01-01"})]
+
+def test_child_dob_not_flagged():
+    assert "ID_DOB_IMPLAUSIBLE" not in [s.code for s in identity.run({"dob": "2019-05-01"})]
 
 def test_unparseable_dob_flagged():
     assert "ID_DOB_UNPARSEABLE" in [s.code for s in identity.run({"dob": "not a date"})]
