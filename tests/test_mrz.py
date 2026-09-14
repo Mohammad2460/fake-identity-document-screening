@@ -37,6 +37,15 @@ def test_name_mismatch_against_claimed_identity():
     signals = mrz.run([L1, L2], {"full_name": "JOHN SMITH"})
     assert "MRZ_NAME_MISMATCH" in [s.code for s in signals]
 
+def test_hyphenated_name_is_not_falsely_flagged():
+    signals = mrz.run([L1, L2], {"full_name": "Anna-Maria Eriksson"})
+    assert "MRZ_NAME_MISMATCH" not in [s.code for s in signals]
+
+def test_truncated_mrz_surname_matches_full_claimed_name():
+    assert mrz.names_match(
+        ["ANNA", "MARIA", "ERIKSSONOVICH"], ["ERIKSSONOV", "ANNA", "MARIA"]
+    )
+
 def test_malformed_input_does_not_raise():
     signals = mrz.run(["garbage"], {})
     assert "MRZ_MALFORMED" in [s.code for s in signals]

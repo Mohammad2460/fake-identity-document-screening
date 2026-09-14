@@ -44,6 +44,22 @@ def parse_td3(line1: str, line2: str) -> dict:
         "final_cd": line2[43],
     }
 
+def name_tokens(name: str) -> list[str]:
+    normalised = (name or "").upper()
+    for ch in ("-", "'", FILLER):
+        normalised = normalised.replace(ch, " ")
+    return [t for t in normalised.split() if t]
+
+def names_match(claimed_tokens: list[str], mrz_tokens: list[str]) -> bool:
+    def is_match(mrz_tok: str, claimed_tok: str) -> bool:
+        return mrz_tok == claimed_tok or claimed_tok.startswith(mrz_tok)
+
+    mrz_ok = all(any(is_match(m, c) for c in claimed_tokens) for m in mrz_tokens)
+    claimed_ok = all(
+        any(is_match(m, c) for m in mrz_tokens) for c in claimed_tokens if len(c) >= 2
+    )
+    return mrz_ok and claimed_ok
+
 _FIELD_CHECKS = [
     ("doc_number_raw", "doc_number_cd", "MRZ_DOCNUM_CHECKSUM_FAIL", "document number"),
     ("dob_raw", "dob_cd", "MRZ_DOB_CHECKSUM_FAIL", "date of birth"),
@@ -110,7 +126,9 @@ def run(mrz_lines: list[str], claimed: dict) -> list[Signal]:
     claimed_name = (claimed.get("full_name") or "").strip().upper()
     if claimed_name:
         mrz_name = f"{f['given_names']} {f['surname']}".strip()
-        if set(claimed_name.split()) != set(mrz_name.split()):
+        claimed_tokens = name_tokens(claimed_name)
+        mrz_tokens = name_tokens(mrz_name)
+        if not names_match(claimed_tokens, mrz_tokens):
             signals.append(Signal(
                 code="MRZ_NAME_MISMATCH", engine="mrz", severity="high",
                 message=(f"Claimed name {claimed_name!r} does not match the name "
