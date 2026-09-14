@@ -10,7 +10,7 @@
 
 **Architecture:** One Python process. FastAPI serves both the JSON API and a static vanilla-JS frontend — no Node, no bundler, no build step, no CORS. Each detection concern is an isolated module under `app/engines/` consuming an input bundle and emitting `list[Signal]`. `app/pipeline.py` fans out to every engine; `app/scoring.py` folds signals into a weighted score and band. Engines degrade gracefully: any engine that raises returns an `ENGINE_ERROR` signal rather than failing the request, so the demo can never hard-crash on a judge's weird upload.
 
-**Tech Stack:** Python 3.13, FastAPI, Uvicorn, OpenCV (contrib), Pillow, RapidOCR (ONNX — PaddleOCR's models without PaddlePaddle), pypdf, RapidFuzz, SQLite (stdlib), pytest. Frontend: HTML + Tailwind CDN + vanilla JS.
+**Tech Stack:** Python 3.13, FastAPI, Uvicorn, OpenCV, Pillow, RapidOCR (ONNX — PaddleOCR's models without PaddlePaddle), pypdf, RapidFuzz, SQLite (stdlib), pytest. Frontend: HTML + Tailwind CDN + vanilla JS.
 
 ---
 
@@ -43,7 +43,8 @@ Every task's requirements implicitly include this section.
 - **Scope is passports and visas.** Border control / Bureau of Immigration. Not Aadhaar, not PAN, not domestic Indian ID. A feature that does not help screen a passport or visa is out of scope.
 - **Zero system-level dependencies.** Everything installs via `pip` alone. No PaddlePaddle, no dlib, no tesseract, no cmake, no MySQL server. A teammate's laptop failing an install at hour 20 loses the hackathon.
 - **Pinned dependency set** (verified to resolve together on 3.13):
-  `fastapi`, `uvicorn`, `python-multipart`, `pillow`, `opencv-contrib-python`, `rapidocr-onnxruntime`, `pypdf`, `rapidfuzz`, `pytest`, `httpx`
+  `fastapi`, `uvicorn`, `python-multipart`, `pillow`, `opencv-python`, `rapidocr-onnxruntime`, `pypdf`, `rapidfuzz`, `pytest`, `httpx`
+- **Only `opencv-python`, never `opencv-contrib-python` alongside it.** `rapidocr-onnxruntime` already depends on `opencv-python`; installing contrib as well puts two packages in the same `cv2` namespace, which breaks imports unpredictably. `FaceDetectorYN`, `FaceRecognizerSF` and ORB are all in standard `opencv-python`.
 - **Offline-capable.** No network on the request path. No LLM API, no government API. Judging-day wifi must be irrelevant — we switch it off on stage deliberately. ONNX models download once during setup.
 - **No real identity documents, ever.** Not scraped, not a teammate's, not your own. Demo data comes from `scripts/make_samples.py`; accuracy numbers come from the SIDTD dataset (1,900 bona fide + 1,900 labelled forgeries, CC BY-SA 3.0). A real document in a git repo is a permanent leak and a judging liability.
 - **Every engine degrades, never crashes.** An engine raising an exception must be caught by the pipeline and converted into a signal. A malformed upload returns a scored result, not a 500.
@@ -147,10 +148,10 @@ tests/                 pytest, one file per engine
 
 ## Task 0: Foundation — deps, skeleton, boot proof
 
-**Why first:** this task exists to fail fast. If `opencv-contrib-python` or `rapidocr-onnxruntime` misbehaves on this machine, you learn at hour 0 with 34 hours to re-plan, not at hour 20.
+**Why first:** this task exists to fail fast. If `opencv-python` or `rapidocr-onnxruntime` misbehaves on this machine, you learn at hour 0 with 34 hours to re-plan, not at hour 20.
 
 **Files:**
-- Create: `requirements.txt`, `.gitignore`, `app/__init__.py`, `app/main.py`, `tests/test_smoke.py`
+- Create: `requirements.txt`, `.gitignore`, `pytest.ini`, `app/__init__.py`, `app/main.py`, `tests/test_smoke.py`
 
 **Interfaces:**
 - Consumes: nothing
@@ -163,7 +164,7 @@ fastapi
 uvicorn
 python-multipart
 pillow
-opencv-contrib-python
+opencv-python
 rapidocr-onnxruntime
 pypdf
 rapidfuzz
@@ -182,6 +183,16 @@ data/samples/*
 models/*.onnx
 cases.db
 .pytest_cache/
+```
+
+- [ ] **Step 2b: Write `pytest.ini`**
+
+Without this, pytest puts `tests/` on the import path instead of the repo root, and every `from app...` in every test fails.
+
+```ini
+[pytest]
+pythonpath = .
+testpaths = tests
 ```
 
 - [ ] **Step 3: Install and verify the risky imports**
@@ -611,7 +622,7 @@ def test_clean_identity_produces_no_high_signals():
     signals = identity.run({
         "full_name": "Anna Maria Eriksson", "dob": "1974-08-12",
         "passport_no": "L898902C3", "nationality": "UTO",
-        "email": "anna.eriksson@gmail.com", "phone": "9876543210",
+        "email": "anna.eriksson@gmail.com", "phone": "9845012763",
     })
     assert not [s for s in signals if s.severity in ("high", "critical")]
 
@@ -637,6 +648,14 @@ def test_single_token_name_is_low_severity():
 def test_sequential_phone_flagged():
     signals = identity.run({"phone": "1234567890"})
     assert "ID_PHONE_SEQUENTIAL" in [s.code for s in signals]
+
+def test_descending_phone_flagged():
+    signals = identity.run({"phone": "9876543210"})
+    assert "ID_PHONE_SEQUENTIAL" in [s.code for s in signals]
+
+def test_realistic_phone_not_flagged():
+    signals = identity.run({"phone": "9845012763"})
+    assert "ID_PHONE_SEQUENTIAL" not in [s.code for s in signals]
 
 def test_repeated_digit_phone_flagged():
     signals = identity.run({"phone": "9999999999"})
@@ -683,8 +702,9 @@ def _looks_like_keyboard_mash(text: str) -> bool:
 def _is_sequential(digits: str) -> bool:
     if len(digits) < 6:
         return False
-    asc = all(int(digits[i + 1]) - int(digits[i]) == 1 for i in range(len(digits) - 1))
-    desc = all(int(digits[i]) - int(digits[i + 1]) == 1 for i in range(len(digits) - 1))
+    # mod 10 so keypad order wraps: 1234567890 and 0987654321 both count as runs
+    asc = all((int(digits[i + 1]) - int(digits[i])) % 10 == 1 for i in range(len(digits) - 1))
+    desc = all((int(digits[i]) - int(digits[i + 1])) % 10 == 1 for i in range(len(digits) - 1))
     return asc or desc or len(set(digits)) == 1
 
 def _parse_dob(dob: str) -> date | None:
@@ -772,7 +792,7 @@ def run(claimed: dict) -> list[Signal]:
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `./.venv/bin/pytest tests/test_identity.py -v`
-Expected: PASS, 11 passed
+Expected: PASS, 13 passed
 
 - [ ] **Step 5: Commit**
 
@@ -2255,7 +2275,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 7: Tune `Z_THRESHOLD` against real samples — return here after Task 16**
 
-Run: `./.venv/bin/python scripts/tune_fields.py`
+Run: `./.venv/bin/python -m scripts.tune_fields`
 
 Clean samples must flag **nothing**. Tampered samples must flag the field you actually tampered. Raise `Z_THRESHOLD` if clean documents flag; lower it if forgeries slip through. Record the final value in the README with your justification.
 
@@ -2317,7 +2337,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Run it and confirm both models land**
 
-Run: `./.venv/bin/python scripts/download_models.py && ls -la models/`
+Run: `./.venv/bin/python -m scripts.download_models && ls -la models/`
 Expected: two `.onnx` files, roughly 230 KB and 38 MB.
 
 **If the download fails, cut Task 10 now.** Do not debug a GitHub raw URL during a hackathon.
@@ -2674,7 +2694,7 @@ def test_clean_identity_without_document_scores_low(dbfile):
     inp = ScreeningInput(claimed={
         "full_name": "Jonathan Michael Brewster", "dob": "1988-03-14",
         "passport_no": "L898902C3", "nationality": "UTO",
-        "email": "jonathan.brewster@gmail.com", "phone": "9876543210",
+        "email": "jonathan.brewster@gmail.com", "phone": "9845012763",
     })
     result = pipeline.screen(inp, dbfile)
     assert result.band in ("CLEAR", "REVIEW")
@@ -2983,6 +3003,7 @@ Expected: FAIL — `ImportError: cannot import name 'startup' from 'app.main'`
 import os
 import shutil
 import uuid
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -2990,16 +3011,18 @@ from app import config, db, report, scoring
 from app.models import ScreeningInput
 from app.pipeline import screen
 
-app = FastAPI(title="Fake Identity & Document Screening System")
-
 def startup() -> None:
     os.makedirs(config.UPLOAD_DIR, exist_ok=True)
     os.makedirs(config.EVIDENCE_DIR, exist_ok=True)
     db.init_db(config.DB_PATH)
 
-@app.on_event("startup")
-def _on_startup() -> None:
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Starlette 1.x removed startup event handlers; lifespan is the supported hook.
     startup()
+    yield
+
+app = FastAPI(title="Fake Identity & Document Screening System", lifespan=lifespan)
 
 @app.get("/health")
 def health() -> dict:
@@ -3469,7 +3492,7 @@ BASE = dict(surname="ERIKSSON", given="ANNA MARIA", doc_no="L898902C3",
             nat="UTO", dob="740812", sex="F", expiry="301231")
 ANNA = {"full_name": "Anna Maria Eriksson", "dob": "1974-08-12",
         "passport_no": "L898902C3", "nationality": "UTO",
-        "email": "anna.eriksson@gmail.com", "phone": "9876543210"}
+        "email": "anna.eriksson@gmail.com", "phone": "9845012763"}
 
 def main() -> None:
     os.makedirs(OUT, exist_ok=True)
@@ -3556,7 +3579,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 2: Generate and eyeball the output**
 
-Run: `./.venv/bin/python scripts/make_samples.py && ls data/samples/`
+Run: `./.venv/bin/python -m scripts.make_samples && ls data/samples/`
 Expected: image files plus `manifest.json`. **Open every image.** They must look like plausible documents on a projector. If they look like grey placeholder boxes, spend twenty minutes on `draw_passport` — judges see these images before they see your code.
 
 - [ ] **Step 3: Write `scripts/check_samples.py` and run every case**
@@ -3595,7 +3618,7 @@ if __name__ == "__main__":
     main()
 ```
 
-Run: `./.venv/bin/python scripts/check_samples.py`
+Run: `./.venv/bin/python -m scripts.check_samples`
 
 **This is the calibration loop, and the most important step in Phase 4.**
 
@@ -3690,7 +3713,7 @@ def stats(path: str) -> dict:
 ```python
 """Screens many applications at once and ranks them highest-risk first.
 
-Usage: python -m scripts.batch_screen data/samples/manifest.json
+Usage: python -m scripts.batch_screen data/samples/manifest.json   (run from the repo root)
 """
 import csv
 import json
@@ -3943,13 +3966,13 @@ echo "==> Installing dependencies"
 
 if [ ! -f models/face_detection_yunet_2023mar.onnx ]; then
   echo "==> Downloading face models (one time, needs network)"
-  ./.venv/bin/python scripts/download_models.py || \
+  ./.venv/bin/python -m scripts.download_models || \
     echo "!! Face models unavailable — the face engine will degrade gracefully."
 fi
 
 if [ ! -f data/samples/manifest.json ]; then
   echo "==> Generating sample documents"
-  ./.venv/bin/python scripts/make_samples.py
+  ./.venv/bin/python -m scripts.make_samples
 fi
 
 echo "==> Starting on http://localhost:8000"

@@ -108,7 +108,7 @@ Storage is three things, only one of them a database: sample images are **files 
 ./run.sh                      # cold start: venv, deps, models, samples, server
 ./.venv/bin/pytest -v         # full suite
 ./.venv/bin/uvicorn app.main:app --reload --port 8000
-./.venv/bin/python scripts/make_samples.py
+./.venv/bin/python -m scripts.make_samples   # always -m, from repo root
 ```
 
 ## Cut order if behind schedule

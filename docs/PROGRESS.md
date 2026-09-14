@@ -39,8 +39,8 @@ Prove the toolchain works before betting 34 hours on it.
 
 | Task | What | Status |
 |---|---|---|
-| T0 | Skeleton, deps, `/health` boots, risky imports verified | ⬜ |
-| T1 | `Signal` model + scoring config | ⬜ |
+| T0 | Skeleton, deps, `/health` boots, risky imports verified | 🟡 code written, pip install running |
+| T1 | `Signal` model + scoring config | 🟡 code written, tests not yet run |
 
 **Gate:**
 - [ ] `./.venv/bin/pytest -v` green
@@ -55,11 +55,11 @@ A complete, demoable screener with **zero image processing**. This is your insur
 
 | Task | What | Status |
 |---|---|---|
-| T2 | **MRZ engine** — ICAO 9303 check digits ⭐ | ⬜ |
-| T3 | Identity engine — synthetic-identity heuristics | ⬜ |
-| T4 | Watchlist — fuzzy sanctions match | ⬜ |
-| T5 | Scoring — decaying weights, critical floor | ⬜ |
-| T6 | SQLite persistence + velocity engine | ⬜ |
+| T2 | **MRZ engine** — ICAO 9303 check digits ⭐ | 🟡 code extracted from plan, tests not yet run |
+| T3 | Identity engine — synthetic-identity heuristics | 🟡 code extracted from plan, tests not yet run |
+| T4 | Watchlist — fuzzy sanctions match | 🟡 code extracted from plan, tests not yet run |
+| T5 | Scoring — decaying weights, critical floor | 🟡 code extracted from plan, tests not yet run |
+| T6 | SQLite persistence + velocity engine | 🟡 code extracted from plan, tests not yet run |
 
 **Gate:**
 - [ ] Full suite green
@@ -197,4 +197,11 @@ Hackathons are lost at the demo, not at the keyboard. Budget the full five hours
 Append one line per completed task: `hh:mm — T<n> done — note`
 
 ```
+2026-09-15 — Work happens on git branch `build` (not master).
+2026-09-15 — T0-T6 code written; waiting on `pip install -r requirements.txt` to finish before running pytest.
 ```
+
+### Resume instructions for a new session
+1. `git checkout build`
+2. Read the first 🟡 or ⬜ row above — that is the next task.
+3. `./.venv/bin/pytest -v` to see what currently passes.
