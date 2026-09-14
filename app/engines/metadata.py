@@ -1,0 +1,92 @@
+"""File-level provenance forensics: EXIF and PDF metadata."""
+import hashlib
+import os
+from PIL import Image
+from app.models import Signal
+
+EDITORS = ("photoshop", "gimp", "canva", "illustrator", "affinity", "pixlr",
+           "paint.net", "lightroom", "snapseed", "picsart", "inkscape", "figma")
+
+TAG_SOFTWARE, TAG_MAKE, TAG_MODEL, TAG_DATETIME_ORIG = 305, 271, 272, 36867
+
+def file_sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def _pdf_signals(path: str) -> list[Signal]:
+    from pypdf import PdfReader
+    out: list[Signal] = []
+    reader = PdfReader(path)
+    info = reader.metadata or {}
+    producer = str(info.get("/Producer", "") or "")
+    creator = str(info.get("/Creator", "") or "")
+    blob = f"{producer} {creator}".lower()
+    if any(e in blob for e in EDITORS):
+        out.append(Signal(
+            code="META_EDITING_SOFTWARE", engine="metadata", severity="medium",
+            message=f"PDF was produced by image-editing software ({producer or creator}).",
+            evidence={"producer": producer, "creator": creator},
+        ))
+    c, m = str(info.get("/CreationDate", "")), str(info.get("/ModDate", ""))
+    if c and m and m > c:
+        out.append(Signal(
+            code="META_PDF_MODIFIED_AFTER_CREATION", engine="metadata", severity="medium",
+            message=f"PDF was modified ({m}) after it was created ({c}).",
+            evidence={"created": c, "modified": m},
+        ))
+    if not out:
+        out.append(Signal(code="META_PDF_CLEAN", engine="metadata", severity="info",
+                          message="PDF metadata shows no editing-tool or post-modification traces."))
+    return out
+
+def _image_signals(path: str) -> list[Signal]:
+    out: list[Signal] = []
+    with Image.open(path) as img:
+        exif = img.getexif()
+        fmt, size = img.format, img.size
+
+    software = str(exif.get(TAG_SOFTWARE, "") or "")
+    make = str(exif.get(TAG_MAKE, "") or "")
+    model = str(exif.get(TAG_MODEL, "") or "")
+
+    if any(e in software.lower() for e in EDITORS):
+        out.append(Signal(
+            code="META_EDITING_SOFTWARE", engine="metadata", severity="medium",
+            message=f"Image carries an editing-software tag: {software!r}. "
+                    f"A genuine capture would name a camera, not an editor.",
+            evidence={"software": software},
+        ))
+
+    if not make and not model:
+        out.append(Signal(
+            code="META_NO_CAMERA_EXIF", engine="metadata", severity="medium",
+            message="No camera make/model in EXIF. The file was re-saved, screenshotted, "
+                    "or synthesised rather than photographed.",
+            evidence={"format": fmt, "size": list(size)},
+        ))
+    else:
+        out.append(Signal(
+            code="META_CAMERA_PRESENT", engine="metadata", severity="info",
+            message=f"Camera EXIF present ({make} {model}).".strip(),
+            evidence={"make": make, "model": model},
+        ))
+
+    if not out:
+        out.append(Signal(code="META_CLEAN", engine="metadata", severity="info",
+                          message="No metadata anomalies found."))
+    return out
+
+def run(path: str) -> list[Signal]:
+    if not path or not os.path.exists(path):
+        return [Signal(code="META_UNREADABLE", engine="metadata", severity="low",
+                       message="No document file was available for metadata analysis.")]
+    try:
+        if path.lower().endswith(".pdf"):
+            return _pdf_signals(path)
+        return _image_signals(path)
+    except Exception as e:
+        return [Signal(code="META_UNREADABLE", engine="metadata", severity="low",
+                       message=f"Metadata could not be parsed: {type(e).__name__}: {e}")]
