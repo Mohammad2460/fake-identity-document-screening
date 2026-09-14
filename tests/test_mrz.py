@@ -53,3 +53,36 @@ def test_invalid_character_returns_malformed_not_raise():
     assert codes == ["MRZ_MALFORMED"]
     assert signals[0].severity == "medium"
     assert "#" in signals[0].message
+
+def test_specimen_passes_composite_and_personal_checks():
+    signals = mrz.run([L1, L2], {"full_name": "ANNA MARIA ERIKSSON"})
+    codes = [s.code for s in signals]
+    assert "MRZ_COMPOSITE_CHECKSUM_FAIL" not in codes
+    assert "MRZ_PERSONAL_CHECKSUM_FAIL" not in codes
+
+def test_final_check_digit_altered_is_detected():
+    bad_l2 = L2[:43] + "9"
+    signals = mrz.run([L1, bad_l2], {})
+    codes = [s.code for s in signals]
+    assert "MRZ_COMPOSITE_CHECKSUM_FAIL" in codes
+    for s in signals:
+        if s.code == "MRZ_COMPOSITE_CHECKSUM_FAIL":
+            assert s.severity == "high"
+
+def test_dob_and_its_own_check_digit_forged_together_still_caught():
+    # NOTE: the fix brief's literal example ("740813", changing only the DOB's
+    # last digit) does not trigger a composite failure: for this TD3 layout the
+    # composite weight applied to the DOB's last digit (7) plus the composite
+    # weight applied to its own recomputed check digit (3) sum to 10 === 0 mod 10,
+    # so that specific single-digit forgery is invariant under the composite
+    # check by mathematical coincidence (verified empirically). "740912"
+    # (changing the DOB's 4th digit instead) exercises the same intent -- a
+    # field and its own check digit forged together, caught only by the
+    # composite check -- and does trigger MRZ_COMPOSITE_CHECKSUM_FAIL.
+    forged_dob = "740912"
+    forged_dob_cd = str(mrz.check_digit(forged_dob))
+    forged_l2 = L2[:13] + forged_dob + forged_dob_cd + L2[20:]
+    signals = mrz.run([L1, forged_l2], {})
+    codes = [s.code for s in signals]
+    assert "MRZ_COMPOSITE_CHECKSUM_FAIL" in codes
+    assert "MRZ_DOB_CHECKSUM_FAIL" not in codes

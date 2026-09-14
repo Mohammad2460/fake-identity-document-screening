@@ -76,6 +76,33 @@ def run(mrz_lines: list[str], claimed: dict) -> list[Signal]:
                              f"{raw!r} computes to {expected}. Field was altered."),
                     evidence={"field": raw, "expected": expected, "found": actual},
                 ))
+
+        personal_number = f["personal_number"]
+        personal_cd = f["personal_number_cd"]
+        if not (personal_cd == FILLER and set(personal_number) <= {FILLER}):
+            expected_personal = check_digit(f["personal_number"])
+            if not personal_cd.isdigit() or int(personal_cd) != expected_personal:
+                signals.append(Signal(
+                    code="MRZ_PERSONAL_CHECKSUM_FAIL", engine="mrz", severity="high",
+                    message=(f"MRZ personal number check digit is {personal_cd}, but the "
+                             f"printed value {f['personal_number']!r} computes to "
+                             f"{expected_personal}. Field was altered."),
+                    evidence={"field": f["personal_number"], "expected": expected_personal,
+                              "found": personal_cd},
+                ))
+
+        composite_input = mrz_lines[1][0:10] + mrz_lines[1][13:20] + mrz_lines[1][21:43]
+        expected_composite = check_digit(composite_input)
+        actual_composite = f["final_cd"]
+        if not actual_composite.isdigit() or int(actual_composite) != expected_composite:
+            signals.append(Signal(
+                code="MRZ_COMPOSITE_CHECKSUM_FAIL", engine="mrz", severity="high",
+                message=(f"MRZ composite check digit is {actual_composite}, but the "
+                         f"fields it protects compute to {expected_composite}. The composite "
+                         f"digit protects the whole line, so a field and its own check "
+                         f"digit were changed together."),
+                evidence={"expected": expected_composite, "found": actual_composite},
+            ))
     except ValueError as e:
         return [Signal(code="MRZ_MALFORMED", engine="mrz", severity="medium",
                        message=f"MRZ contains invalid characters: {e}")]
