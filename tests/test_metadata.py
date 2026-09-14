@@ -34,3 +34,14 @@ def test_unknown_extension_is_handled(tmp_path):
     p = tmp_path / "f.bin"
     p.write_bytes(b"not an image")
     assert metadata.run(str(p))  # returns signals, does not raise
+
+def test_pdf_date_digits_helper_compares_correctly():
+    created = "D:20240101120000+05'30'"
+    modified = "D:20240102"
+    c = metadata.pdf_date_digits(created)
+    m = metadata.pdf_date_digits(modified)
+    assert m > c
+
+def test_pdf_date_digits_helper_ignores_short_dates():
+    assert metadata.pdf_date_digits("D:2024") is None
+    assert metadata.pdf_date_digits("") is None

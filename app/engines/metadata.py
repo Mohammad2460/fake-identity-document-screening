@@ -1,8 +1,24 @@
 """File-level provenance forensics: EXIF and PDF metadata."""
 import hashlib
 import os
+import re
 from PIL import Image
 from app.models import Signal
+
+
+def pdf_date_digits(raw: str) -> str | None:
+    """Extract a zero-padded YYYYMMDDHHmmSS digit string from a PDF date.
+
+    Strips an optional "D:" prefix and any trailing timezone/offset. Returns
+    None if fewer than 8 digits (a full date, at minimum) are present.
+    """
+    s = (raw or "")
+    if s.startswith("D:"):
+        s = s[2:]
+    digits = re.match(r"\d*", s).group(0)[:14]
+    if len(digits) < 8:
+        return None
+    return digits.ljust(14, "0")
 
 EDITORS = ("photoshop", "gimp", "canva", "illustrator", "affinity", "pixlr",
            "paint.net", "lightroom", "snapseed", "picsart", "inkscape", "figma")
@@ -31,7 +47,8 @@ def _pdf_signals(path: str) -> list[Signal]:
             evidence={"producer": producer, "creator": creator},
         ))
     c, m = str(info.get("/CreationDate", "")), str(info.get("/ModDate", ""))
-    if c and m and m > c:
+    c_digits, m_digits = pdf_date_digits(c), pdf_date_digits(m)
+    if c_digits and m_digits and m_digits > c_digits:
         out.append(Signal(
             code="META_PDF_MODIFIED_AFTER_CREATION", engine="metadata", severity="medium",
             message=f"PDF was modified ({m}) after it was created ({c}).",
