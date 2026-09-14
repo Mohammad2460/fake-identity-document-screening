@@ -1,7 +1,18 @@
 """SQLite persistence for screening cases."""
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
+
+
+def normalise_phone(v: str | None) -> str | None:
+    digits = re.sub(r"\D", "", v or "")
+    return digits or None
+
+
+def normalise_email(v: str | None) -> str | None:
+    email = (v or "").strip().lower()
+    return email or None
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cases (
@@ -48,14 +59,15 @@ def save_case(path, case_id, claimed, score, band, signals, doc_hash=None) -> No
             "(case_id, full_name, passport_no, nationality, email, phone, doc_hash, score, band, payload) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (case_id, claimed.get("full_name"), claimed.get("passport_no"),
-             claimed.get("nationality"), claimed.get("email"), claimed.get("phone"),
+             claimed.get("nationality"), normalise_email(claimed.get("email")),
+             normalise_phone(claimed.get("phone")),
              doc_hash, score, band, payload),
         )
 
 def find_prior(path, *, passport_no=None, email=None, phone=None, doc_hash=None) -> list[dict]:
     clauses, params = [], []
-    for col, val in (("passport_no", passport_no), ("email", email),
-                     ("phone", phone), ("doc_hash", doc_hash)):
+    for col, val in (("passport_no", passport_no), ("email", normalise_email(email)),
+                     ("phone", normalise_phone(phone)), ("doc_hash", doc_hash)):
         if val:
             clauses.append(f"{col} = ?")
             params.append(val)
