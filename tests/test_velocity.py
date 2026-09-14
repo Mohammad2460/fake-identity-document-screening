@@ -29,6 +29,14 @@ def test_identical_document_hash_is_flagged(dbfile):
     signals = velocity.run({"full_name": "B"}, "deadbeef", dbfile)
     assert "VEL_DUPLICATE_DOCUMENT" in [s.code for s in signals]
 
+def test_same_hash_same_name_is_only_resubmission(dbfile):
+    db.save_case(dbfile, "c1", {"full_name": "Anna Eriksson"}, 10, "CLEAR", [],
+                 doc_hash="deadbeef")
+    signals = velocity.run({"full_name": "Anna Eriksson"}, "deadbeef", dbfile)
+    codes = [s.code for s in signals]
+    assert "VEL_RESUBMISSION" in codes
+    assert "VEL_DUPLICATE_DOCUMENT" not in codes
+
 def test_burst_of_submissions_is_flagged(dbfile):
     for i in range(6):
         db.save_case(dbfile, f"c{i}", {"email": f"u{i}@x.com"}, 10, "CLEAR", [])
