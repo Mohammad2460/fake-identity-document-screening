@@ -1,41 +1,106 @@
 # CLAUDE.md — read this first, every session
 
-Project: **AI-Based Fake Identity & Document Screening System** (hackathon, 24-36h).
+**SIH26188 — AI-Based Fake Identity & Document Screening System**
+Smart India Hackathon · Ministry of Home Affairs · 36-hour build.
 
-**The implementation plan is `docs/superpowers/plans/2026-09-14-fake-identity-screening.md`.**
-It contains 17 tasks with complete code. Do not re-derive anything it already specifies.
-To execute it, use the `superpowers:subagent-driven-development` skill (one fresh subagent per task).
+## The problem statement, verbatim
+
+> Identity documents such as passports, visas etc. can be forged or tampered.
+> Manual verification is time-consuming and can lead to human errors.
+> Forged documents can contain altered photographs, names, DOBs, or visa stamps.
+> High volumes of documents make manual inspection inefficient.
+
+**Scope is passports and visas** — border control / Bureau of Immigration. Not Aadhaar, not PAN, not domestic Indian ID. If a feature does not help screen a passport or a visa, it is out of scope.
+
+The PS names four attack types. Every one has an owning engine:
+
+| Attack named in the PS | Engine that catches it |
+|---|---|
+| altered photographs | `fieldforensics` (portrait region) + `face` |
+| altered names | `mrz` (name vs MRZ) + `ocr` (name vs printed) + `fieldforensics` |
+| altered DOBs | `mrz` (check digit) + `fieldforensics` (per-field ELA) |
+| forged visa stamps | `fieldforensics` (stamp region) |
+| high volumes | `batch` mode + dashboard |
+
+## Our one-line pitch
+
+> An explainable AI system that verifies identity documents, detects forgery and tampering, matches the document holder's face, and produces an evidence-backed risk score in seconds.
+
+## The differentiator — field-level forensics
+
+Everyone else's project says *"this document is 78% fake."*
+Ours says **"the DOB field was altered — here it is, circled in red."**
+
+OCR returns a bounding box per text field. We run ELA **inside each box separately** and find the box whose compression history differs from its neighbours. That field was retyped. Same method on the portrait region and the visa stamp region.
+
+**This is the centerpiece. Protect it. It is the demo, the innovation claim, and the best visual, all in one.**
 
 ## Where we are
 
-Track progress in `docs/PROGRESS.md`. Read it before starting work; update it after every task.
+`docs/PROGRESS.md` is the phase-by-phase runbook and the single source of truth. Read it before starting; update it after every task.
+Full plan with complete code: `docs/superpowers/plans/2026-09-15-sih26188-document-screening.md`
+To execute: use the `superpowers:subagent-driven-development` skill, one fresh subagent per task.
 
 ## Hard rules
 
-1. **No system-level dependencies.** Everything installs via `pip` alone. No brew, no tesseract, no dlib, no cmake. A teammate's laptop failing an install at hour 20 loses the hackathon.
-2. **No network on the request path.** No LLM API, no remote watchlist. Judging-day wifi must be irrelevant. Models download once during setup only.
-3. **Every engine degrades, never crashes.** An engine that raises must become an `ENGINE_ERROR` signal, not a 500. A judge uploading a corrupt file still sees a verdict.
-4. **Every signal carries a human-readable `message`** naming what was checked and what was found. Explainability is the product, not a feature.
-5. **Synthetic data only.** Never a real ID document, including your own. All samples come from `scripts/make_samples.py`.
-6. **Commit after every task.** Small commits; the history is evidence of process.
-7. **TDD.** Test first, watch it fail, implement minimally, watch it pass, commit.
+1. **No real identity documents. Ever.** Not scraped, not a teammate's, not your own. Demo data comes from `scripts/make_samples.py`; accuracy numbers come from the SIDTD dataset (1,900 genuine + 1,900 labelled forgeries). A real document in a git repo is a permanent leak and a judging liability.
+2. **No system-level dependencies.** `pip` only. No PaddlePaddle, no dlib, no tesseract, no cmake, no MySQL server. A teammate's laptop failing an install at hour 20 loses the hackathon.
+3. **No network on the request path.** No LLM API, no government API. Demo-day wifi must be irrelevant — we turn it off on stage deliberately. Models download once at setup.
+4. **Every engine degrades, never crashes.** An engine that raises becomes an `ENGINE_ERROR` signal, not a 500. A judge uploading a corrupt file still sees a verdict.
+5. **Every signal carries a human-readable `message`** naming what was checked and what was found. Explainability *is* the product — the PS and our pitch both say so.
+6. **No frontend build step.** Vanilla HTML + Tailwind CDN + plain JS. Nobody on the team knows React or JS; Claude writes all of it. Adding a bundler adds a way to lose.
+7. **TDD.** Test first → watch it fail → minimal implementation → watch it pass → commit.
+8. **Commit after every task.** The history is evidence of process.
 
 ## Architecture in one paragraph
 
-One Python process. FastAPI serves both the JSON API and a static vanilla-JS frontend — no Node, no bundler, no build step, no CORS. Each detection concern is an isolated module in `app/engines/` that takes an input bundle and returns `list[Signal]`. `app/pipeline.py` fans out to all eight engines inside per-engine try/except; `app/scoring.py` folds the signals into a 0-100 score and a CLEAR/REVIEW/REJECT band. Adding an engine means adding one file and one registry line. Cutting an engine means setting its weight to `0.0` in `app/config.py`.
+One Python process. FastAPI serves both the JSON API and the static frontend — no Node, no bundler, no CORS. Each detection concern is an isolated module in `app/engines/` taking an input bundle and returning `list[Signal]`. `app/pipeline.py` fans out to every engine inside per-engine try/except; `app/scoring.py` folds signals into a 0-100 score and a CLEAR/REVIEW/REJECT band. Add an engine = one file plus one registry line. Cut an engine = set its weight to `0.0` in `app/config.py`.
 
-## The eight engines
+## The engines
 
 | Engine | Catches |
 |---|---|
-| `mrz` | Altered passport fields — ICAO 9303 check-digit arithmetic |
-| `identity` | Invalid Aadhaar/PAN, impossible DOB, disposable email, fabricated names |
-| `watchlist` | Sanctions / PEP name matches, fuzzy so transliteration doesn't evade |
-| `velocity` | Same ID under different names, duplicate documents, bulk bursts |
+| `mrz` | Altered passport fields — ICAO 9303 check-digit arithmetic. Self-proving, needs no reference database. |
+| `fieldforensics` | **Which field** was tampered — per-region ELA on OCR boxes, portrait, stamps. ⭐ centerpiece |
+| `ocr` | Claimed name/DOB/number not printed on the uploaded document |
+| `face` | Missing or duplicate portrait; selfie-to-portrait mismatch |
+| `tamper` | Whole-image splicing (ELA), cloning (ORB copy-move), noise inconsistency |
 | `metadata` | EXIF/PDF provenance — editor tags, missing camera data |
-| `tamper` | Splicing (ELA), cloning (ORB copy-move), noise inconsistency |
-| `ocr` | Claimed name/DOB/ID not printed on the uploaded document |
-| `face` | Missing or duplicate portrait, selfie-to-document mismatch |
+| `crossdoc` | Passport vs visa vs prior submissions — same person, contradictory details |
+| `watchlist` | Sanctions / PEP name matches, fuzzy so transliteration doesn't evade |
+| `velocity` | Same document under different names, duplicates, bulk bursts |
+
+## Data — three sources, all synthetic
+
+| Source | Purpose |
+|---|---|
+| `scripts/make_samples.py` | The six scripted demo cases. We control exactly what each triggers. |
+| **SIDTD** (1,900 bona fide + 1,900 forged, CC BY-SA 3.0) | Real accuracy numbers, legally |
+| **MIDV-2020** (1,000 mock IDs, 72,409 images) | ID-document analysis validation |
+
+Storage is three things, only one of them a database: sample images are **files on disk**; the watchlist is **one CSV**; `cases.db` is **SQLite**, holding one row per screening. The case DB is what makes cross-document and duplicate detection possible — it is the only reason we can catch the same passport submitted twice under different names.
+
+**We need zero genuine documents.** Every check is self-contained: MRZ check digits prove the document against itself, and field-level ELA compares each field against the other fields on the same page.
+
+## Stack decisions — settled, do not relitigate
+
+| Chose | Over | Why |
+|---|---|---|
+| RapidOCR | PaddleOCR | RapidOCR *is* PaddleOCR's models in ONNX. Same accuracy, pip-only, no PaddlePaddle. Slides may honestly say "PaddleOCR models". |
+| OpenCV YuNet + SFace | `face_recognition` / dlib | No compiler, no cmake. ONNX, pip-only. |
+| ONNX Runtime | PyTorch | No time and no labelled data to train. We *run* pretrained neural nets; we don't train one. Defensible and honest. |
+| SQLite | MySQL | Zero config, one file, nothing to fail on demo day. "Swaps to MySQL in production" — one line. |
+| Vanilla + Tailwind CDN | React | Nobody knows React. No build step = no build failure at hour 30. |
+| Deterministic rules for adjudication | Black-box classifier | A fraud decision a border officer cannot explain is one they cannot use. |
+
+**Yes, we use AI.** RapidOCR, YuNet and SFace are neural networks. We run pretrained models via ONNX Runtime and do the *adjudication* with explainable rules. That is the design, not a shortcut.
+
+## Known limitations — state them before a judge finds them
+
+- ELA false-positives on high-contrast text and on non-JPEG sources. This is why tamper signals cap at `high`, never `critical`, and why one signal alone lands in REVIEW rather than REJECT.
+- OCR models are English-script. Non-Latin document text is out of scope.
+- No liveness detection, no deepfake/GAN-face detection, no live government API integration. All named as future work.
+- Accuracy is quoted only against SIDTD, never invented.
 
 ## Commands
 
@@ -46,15 +111,9 @@ One Python process. FastAPI serves both the JSON API and a static vanilla-JS fro
 ./.venv/bin/python scripts/make_samples.py
 ```
 
-## Judgment calls already made — do not relitigate
-
-- **No LLM.** Offline operation is a compliance feature and removes demo-day network risk.
-- **No trained classifier.** No ethically usable labelled forged-ID dataset exists within the time budget. Deterministic, explainable checks beat an unvalidated model.
-- **Decaying score, not a sum.** Six weak signals must not outvote one proven forgery. See `app/scoring.py`.
-- **Tamper signals cap at `high`, never `critical`.** ELA false-positives on high-contrast text. Say this out loud in the demo.
-
 ## Cut order if behind schedule
 
-`face` → `report` → OCR's secondary DOB/ID cross-checks. **Never cut** `mrz`, `identity`, `scoring`, or the Task 16 rehearsal.
+`crossdoc` → `batch` → `face` → OCR's secondary cross-checks.
+**Never cut:** `mrz`, `fieldforensics`, `scoring`, or the Phase 6 rehearsal.
 
 At hour 22, whatever is not working gets cut, not fixed.
