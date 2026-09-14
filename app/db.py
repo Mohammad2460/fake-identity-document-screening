@@ -55,9 +55,14 @@ def save_case(path, case_id, claimed, score, band, signals, doc_hash=None) -> No
     })
     with _conn(path) as con:
         con.execute(
-            "INSERT OR REPLACE INTO cases "
+            "INSERT INTO cases "
             "(case_id, full_name, passport_no, nationality, email, phone, doc_hash, score, band, payload) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(case_id) DO UPDATE SET "
+            "full_name=excluded.full_name, passport_no=excluded.passport_no, "
+            "nationality=excluded.nationality, email=excluded.email, "
+            "phone=excluded.phone, doc_hash=excluded.doc_hash, "
+            "score=excluded.score, band=excluded.band, payload=excluded.payload",
             (case_id, claimed.get("full_name"), claimed.get("passport_no"),
              claimed.get("nationality"), normalise_email(claimed.get("email")),
              normalise_phone(claimed.get("phone")),
