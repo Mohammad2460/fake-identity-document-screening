@@ -95,3 +95,37 @@ def test_dob_and_its_own_check_digit_forged_together_still_caught():
     codes = [s.code for s in signals]
     assert "MRZ_COMPOSITE_CHECKSUM_FAIL" in codes
     assert "MRZ_DOB_CHECKSUM_FAIL" not in codes
+
+
+# --- task-16b item 2: OCR output of a genuine rendered MRZ must parse cleanly ---
+OCR_L1 = "P<UTOERIKSSON<<ANNA<MARIA<<<"                    # trailing fillers dropped
+OCR_L2 = "L898902C36UT07408122F3012316<<<<<<<<<<<<<<06"    # nationality O read as 0
+
+
+def test_normalise_pads_line1_whose_trailing_fillers_ocr_dropped():
+    l1, _ = mrz.normalise_td3([OCR_L1, OCR_L2])
+    assert len(l1) == 44 and l1.startswith(OCR_L1) and set(l1[28:]) == {"<"}
+
+
+def test_normalise_repairs_digit_letter_confusion_by_field_type():
+    _, l2 = mrz.normalise_td3([OCR_L1, OCR_L2])
+    assert l2[10:13] == "UTO"
+    # alphanumeric document number untouched; numeric fields repaired the other way
+    _, l2b = mrz.normalise_td3([OCR_L1, "L898902C36UTO74O8122F3O12316<<<<<<<<<<<<<<06"])
+    assert l2b[0:9] == "L898902C3" and l2b[13:19] == "740812" and l2b[21:27] == "301231"
+
+
+def test_normalise_does_not_pad_a_line1_cut_mid_name():
+    l1, _ = mrz.normalise_td3(["P<UTOERIKSSON<<ANNA<MAR", OCR_L2])
+    assert l1 == "P<UTOERIKSSON<<ANNA<MAR"
+
+
+def test_ocr_read_genuine_mrz_passes_all_checks():
+    sigs = mrz.run([OCR_L1, OCR_L2], {"full_name": "Anna Maria Eriksson"})
+    assert [s.code for s in sigs] == ["MRZ_ALL_CHECKS_PASS"]
+    assert sigs[0].evidence["nationality"] == "UTO"
+
+
+def test_normalisation_does_not_hide_an_altered_document_number():
+    bad = "L899902C36UT07408122F3012316<<<<<<<<<<<<<<06"
+    assert "MRZ_DOCNUM_CHECKSUM_FAIL" in [s.code for s in mrz.run([OCR_L1, bad], {})]

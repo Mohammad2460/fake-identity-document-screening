@@ -26,3 +26,17 @@ def test_build_mrz_without_personal_field_is_unchanged():
     assert codes == []
     parsed = mrz.parse_td3(l1, l2)
     assert parsed["personal_number"].replace(mrz.FILLER, "") == ""
+
+
+def test_rendered_genuine_passport_ocr_to_mrz_is_valid_with_nationality_uto(tmp_path):
+    """Real rendered sample -> RapidOCR -> MRZ: valid digits, nationality UTO."""
+    from app import pipeline
+    from app.engines import ocr
+    from scripts.make_samples import BASE, draw_passport, save_issued
+    p = str(tmp_path / "clean.jpg")
+    save_issued(draw_passport(BASE), p)
+    _, lines, _ = ocr.run(p, {})
+    codes = [s.code for s in mrz.run(lines, {"full_name": "Anna Maria Eriksson"})]
+    assert codes == ["MRZ_ALL_CHECKS_PASS"]
+    fields = pipeline._mrz_fields(lines, "passport")
+    assert fields["nationality"] == "UTO" and fields["passport_no"] == "L898902C3"

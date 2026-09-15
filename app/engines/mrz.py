@@ -22,6 +22,52 @@ def _names(line1: str) -> tuple[str, str]:
     clean = lambda x: " ".join(p for p in x.split(FILLER) if p)
     return clean(surname), clean(given)
 
+TD3_LEN = 44
+
+# OCR reads MRZ glyphs without knowing which ICAO field it is in, so letter/digit
+# look-alikes get swapped (measured on the rendered genuine sample: nationality
+# "UTO" read as "UT0"). The field TYPE is fixed by ICAO 9303, so each position is
+# repaired only towards the character class it must hold. Alphanumeric fields
+# (document number, personal number) are never touched - there the ambiguity is
+# real and the check digit must decide.
+_TO_ALPHA = str.maketrans({"0": "O", "1": "I", "2": "Z", "5": "S", "6": "G", "8": "B"})
+_TO_DIGIT = str.maketrans({"O": "0", "D": "0", "Q": "0", "I": "1", "L": "1",
+                           "Z": "2", "S": "5", "G": "6", "B": "8"})
+# TD3 line-2 spans: (start, end, "alpha" | "digit"); digit positions include check digits.
+_LINE2_TYPES = [(9, 10, "digit"), (10, 13, "alpha"), (13, 20, "digit"), (20, 21, "alpha"),
+                (21, 28, "digit"), (42, 44, "digit")]
+
+
+def _clean(line: str) -> str:
+    return (line or "").strip().upper().replace(" ", "").replace("«", "<<")
+
+
+def normalise_td3(lines: list[str]) -> list[str]:
+    """Repair what OCR does to a genuine TD3 MRZ, without inventing content.
+
+    - Line 1: OCR drops the run of trailing '<' fillers (rendered sample: 28 of 44
+      characters returned). A line 1 that still ENDS in a filler is padded to 44;
+      one cut mid-name is left short so it stays MRZ_MALFORMED.
+    - Both lines: letter/digit look-alikes repaired by ICAO field type.
+    Line 2 is never padded: it carries check digits, and padding would forge them.
+    """
+    out = [_clean(ln) for ln in lines]
+    if len(out) < 2:
+        return out
+    l1, l2 = out[0], out[1]
+    if len(l1) < TD3_LEN and l1.endswith(FILLER):
+        l1 = l1.ljust(TD3_LEN, FILLER)
+    if len(l1) >= 5:   # issuing state and names are letters-only
+        l1 = l1[:2] + l1[2:].translate(_TO_ALPHA)
+    if len(l2) >= TD3_LEN:
+        chars = list(l2)
+        for start, end, kind in _LINE2_TYPES:
+            table = _TO_ALPHA if kind == "alpha" else _TO_DIGIT
+            chars[start:end] = list("".join(chars[start:end]).translate(table))
+        l2 = "".join(chars)
+    return [l1, l2] + out[2:]
+
+
 def parse_td3(line1: str, line2: str) -> dict:
     surname, given = _names(line1)
     return {
@@ -69,7 +115,7 @@ _FIELD_CHECKS = [
 def run(mrz_lines: list[str], claimed: dict) -> list[Signal]:
     signals: list[Signal] = []
 
-    mrz_lines = [ln.strip().upper().replace(" ", "") for ln in mrz_lines]
+    mrz_lines = normalise_td3(mrz_lines)
 
     if len(mrz_lines) < 2 or len(mrz_lines[0]) < 44 or len(mrz_lines[1]) < 44:
         return [Signal(

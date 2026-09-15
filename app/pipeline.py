@@ -40,8 +40,9 @@ def _mrz_fields(lines: list[str], label: str) -> dict | None:
     if len(lines) < 2:
         return None
     try:
-        # Same normalisation mrz.run applies: OCR output may be lowercase or spaced.
-        l1, l2 = (ln.strip().upper().replace(" ", "") for ln in lines[:2])
+        # Same normalisation mrz.run applies: case, spaces, dropped trailing fillers
+        # and letter/digit look-alikes repaired by ICAO field type (task-16b item 2).
+        l1, l2 = mrz.normalise_td3(lines)[:2]
         f = mrz.parse_td3(l1, l2)
     except Exception:
         return None
