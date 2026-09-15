@@ -274,6 +274,22 @@ def test_evidence_source_is_passport_all_green_when_neither_suspect(dbfile, tmp_
     assert len(list(evidence_dir.iterdir())) == 1
 
 
+def test_evidence_drawing_failure_is_recorded_not_raised(dbfile, tmp_path,
+                                                         evidence_dir, monkeypatch):
+    doc = tmp_path / "doc.jpg"
+    Image.new("RGB", (64, 64), "white").save(doc, "JPEG")
+    monkeypatch.setattr(pipeline.fieldforensics, "run",
+                        lambda path, boxes, portrait_box: ([], _stub_regions(True)))
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(pipeline.annotate, "draw_evidence", boom)
+
+    r = pipeline.screen(ScreeningInput(claimed={"full_name": "A B"}, doc_path=str(doc)), dbfile)
+    assert r.evidence_path is None and r.evidence_source is None
+    assert any(e.startswith("annotate:") for e in r.engine_errors)
+
+
 def test_evidence_source_is_none_when_no_regions(dbfile):
     r = pipeline.screen(ScreeningInput(claimed={"full_name": "A B"}), dbfile)
     assert r.evidence_source is None

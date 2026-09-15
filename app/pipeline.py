@@ -159,15 +159,20 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
     # passport wins if it has a suspect region, else the visa, else the passport
     # (all-green) if it was analysed at all, else no evidence.
     evidence_source = None
+    chosen = None
     if doc_regions and any(r["suspect"] for r in doc_regions):
-        evidence_path = annotate.draw_evidence(inp.doc_path, doc_regions, config.EVIDENCE_DIR)
-        evidence_source = "passport"
+        chosen = (inp.doc_path, doc_regions, "passport")
     elif visa_regions and any(r["suspect"] for r in visa_regions):
-        evidence_path = annotate.draw_evidence(inp.visa_path, visa_regions, config.EVIDENCE_DIR)
-        evidence_source = "visa"
+        chosen = (inp.visa_path, visa_regions, "visa")
     elif doc_regions:
-        evidence_path = annotate.draw_evidence(inp.doc_path, doc_regions, config.EVIDENCE_DIR)
-        evidence_source = "passport"
+        chosen = (inp.doc_path, doc_regions, "passport")
+    if chosen:
+        # Drawing is presentation only: a failure loses the picture, never the verdict.
+        try:
+            evidence_path = annotate.draw_evidence(chosen[0], chosen[1], config.EVIDENCE_DIR)
+            evidence_source = chosen[2] if evidence_path else None
+        except Exception as e:
+            errors.append(f"annotate: {type(e).__name__}: {e}")
 
     score, band = scoring.score_signals(signals)
     result = ScreeningResult(case_id=case_id, score=score, band=band, signals=signals,
