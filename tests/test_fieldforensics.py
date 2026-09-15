@@ -33,6 +33,12 @@ def test_outlier_indices_finds_the_extreme_value():
 def test_outlier_indices_empty_when_uniform():
     assert ff.outlier_indices([10.0, 10.1, 9.9, 10.05]) == []
 
+def test_outlier_indices_tight_group_needs_a_real_margin():
+    # Genuine q60 visa: fields 0.66-0.89, a tight MAD made a 0.16 wobble look like an edit.
+    vals = [0.72, 0.73, 0.74, 0.73, 0.70, 0.76, 0.73, 0.75, 0.71, 0.89]
+    assert ff.outlier_indices(vals) == []
+    assert ff.outlier_indices(vals + [1.4]) == [10]
+
 def test_outlier_indices_handles_tiny_input():
     assert ff.outlier_indices([1.0]) == []
     assert ff.outlier_indices([]) == []
@@ -253,3 +259,54 @@ def test_sample_forged_visa_stamp_is_flagged_as_the_stamp(tmp_path):
     x, y, w, h = flagged[0]["box"]
     assert x <= 725 and y <= 335 and x + w >= 925 and y + h >= 465   # whole stamp boxed
     assert [s.code for s in signals] == ["FF_STAMP_TAMPERED"]
+
+
+# --- task-16c: photoreal portrait on the samples ------------------------------
+import os as _os
+
+_needs_faces = pytest.mark.skipif(
+    not (_os.path.exists("data/faces/sfhq_01.jpg")
+         and _os.path.exists("models/face_detection_yunet_2023mar.onnx")),
+    reason="data/faces crops or face models missing")
+
+
+def _ff_with_portrait(path):
+    from app import pipeline
+    from app.engines import ocr
+    _, _, boxes = ocr.run(path, {})
+    signals, regions = ff.run(path, boxes, pipeline._portrait_box(path))
+    return signals, [r for r in regions if r["suspect"]], regions
+
+
+@_needs_faces
+@pytest.mark.parametrize("quality", [60, 70, 80, 95])
+@pytest.mark.parametrize("kind", ["passport", "visa"])
+def test_genuine_portrait_is_not_flagged_and_is_not_a_stamp(tmp_path, kind, quality):
+    p = str(tmp_path / f"{kind}.jpg")
+    img = ms.draw_passport(ms.BASE) if kind == "passport" else ms.draw_visa(ms.BASE)
+    ms.save_issued(img, p, quality=quality)
+    signals, flagged, regions = _ff_with_portrait(p)
+    assert not flagged, [(r["kind"], r["label"], r["score"]) for r in flagged]
+    assert [r for r in regions if r["kind"] == "portrait"]
+    x0, y0, x1, y1 = ms.PORTRAIT_BOX
+    photo = (x0, y0, x1 - x0, y1 - y0)
+    assert not [r for r in regions if r["kind"] == "stamp"
+                and ff._overlap_fraction(r["box"], photo) > 0.5]
+
+
+@_needs_faces
+@pytest.mark.parametrize("q2", [95, 97])
+def test_substituted_photo_is_flagged_as_the_photograph_only(tmp_path, q2):
+    p = str(tmp_path / "04.jpg")
+    ms.save_issued(ms.draw_passport(ms.BASE), p)
+    ms.paste_portrait(ms.reload(p), ms.FACE_B).save(p, "JPEG", quality=q2)
+    signals, flagged, _ = _ff_with_portrait(p)
+    assert [r["kind"] for r in flagged] == ["portrait"]
+    assert [s.code for s in signals] == ["FF_PHOTO_TAMPERED"]
+
+
+def test_stamp_candidate_inside_the_photograph_zone_is_not_a_stamp():
+    face_box = (83, 167, 137, 184)
+    zone = ff.portrait_zone(face_box)
+    assert ff._overlap_fraction((50, 166, 71, 214), zone) > ff.STAMP_OVERLAP_MAX   # hair
+    assert ff._overlap_fraction((720, 330, 211, 141), zone) == 0.0              # real stamp

@@ -10,6 +10,10 @@ from app.models import Signal
 Z_THRESHOLD = 3.5      # modified z-score above which a field is an outlier
 MIN_REGIONS = 3        # fewer than this and "outlier" is meaningless
 MIN_AREA = 200         # ignore specks
+# Floor on the MAD as a fraction of the group median. A tight genuine group (q60 visa:
+# MAD 0.035 on a median 0.73, 4.8%) otherwise turns a 0.16 wobble into z 3-4.6.
+# Measured genuine MAD/median 2-15%; retyped fields sit 2x the median.
+MAD_FLOOR_FRACTION = 0.08
 BACKGROUND_SPLIT = 128 # median background luminance below this = light-on-dark element
 BACKGROUND_RING = 8    # pixels around a box sampled as its background
 BANNER_WIDTH_FRACTION = 0.8   # colour blobs this wide are banners, not stamps
@@ -20,6 +24,25 @@ STAMP_LETTERING_MIN = 0.5     # a text box this far inside a stamp is the stamp'
 # was 1.13-1.21 vs a data-field median of 0.60 (z 7-8), so they are compared only
 # with each other (task-16b item 4). Their integrity is owned by the MRZ check digits.
 _MRZ_TEXT = re.compile(r"^[A-Z0-9<]{20,}$")
+# Portrait (task-16c). A detected face box covers only the face; the photograph around
+# it (hair, backdrop) is often saturated enough to look like a "stamp" blob. Stamp
+# candidates mostly inside this zone are part of the photograph.
+PORTRAIT_ZONE_W = 1.6   # zone width  = face box width  x this
+PORTRAIT_ZONE_H = 1.5   # zone height = face box height x this
+# A photograph cannot be z-scored against text (different texture) and is alone in its
+# peer group, so it is judged on luma ELA per unit of edge energy relative to the
+# median of the dark-on-light text fields. Measured on synthetic renders: genuine
+# portrait 1.3-2.5x the text median (q60-q95), a photo pasted in after issue 5.3-9.8x.
+PORTRAIT_RATIO_MAX = 4.0
+PORTRAIT_ELA_MIN = 0.5      # below this the probe quality matches the save: no evidence
+TEXT_RATIO_FLOOR = 1e-3     # keeps a near-zero text median from inflating the ratio
+
+def portrait_zone(face_box: tuple) -> tuple[int, int, int, int]:
+    """The photograph around a detected face box (x, y, w, h)."""
+    x, y, w, h = face_box
+    zw, zh = w * PORTRAIT_ZONE_W, h * PORTRAIT_ZONE_H
+    cx, cy = x + w / 2, y + h / 2
+    return int(cx - zw / 2), int(cy - zh / 2), int(zw), int(zh)
 
 def _is_mrz_text(text: str) -> bool:
     t = (text or "").upper().replace(" ", "")
@@ -79,7 +102,7 @@ def outlier_indices(values: list[float], z_threshold: float = Z_THRESHOLD) -> li
         return []
     arr = np.asarray(values, dtype=np.float64)
     median = float(np.median(arr))
-    mad = float(np.median(np.abs(arr - median)))
+    mad = max(float(np.median(np.abs(arr - median))), MAD_FLOOR_FRACTION * abs(median))
     if mad < 1e-6:
         spread = float(arr.std())
         if spread < 1e-6:
@@ -131,7 +154,9 @@ def run(path: str, ocr_boxes: list[dict],
                         "kind": "portrait", "suspect": False, "score": 0.0})
 
     try:
-        printed = [r["box"] for r in regions]
+        printed = [r["box"] for r in regions if r["kind"] != "portrait"]
+        if portrait_box and portrait_box[2] * portrait_box[3] >= MIN_AREA:
+            printed.append(portrait_zone(portrait_box))
         for sb in stamp_regions(path):
             if any(_overlap_fraction(sb, pb) > STAMP_OVERLAP_MAX for pb in printed):
                 continue   # already represented by a text/portrait region
@@ -163,6 +188,8 @@ def run(path: str, ocr_boxes: list[dict],
         ela = ela_map(path, channel="luma")
         with Image.open(path) as im:
             gray = np.asarray(ImageOps.exif_transpose(im).convert("L"))
+        grad = (np.abs(cv2.Sobel(gray.astype(np.float32), cv2.CV_32F, 1, 0))
+                + np.abs(cv2.Sobel(gray.astype(np.float32), cv2.CV_32F, 0, 1)))
         scores, backgrounds = [], []
         for r in regions:
             sboxes = r.get("score_boxes") or [r["box"]]
@@ -183,6 +210,8 @@ def run(path: str, ocr_boxes: list[dict],
     # MRZ lines form their own group (see _MRZ_TEXT).
     groups: dict[str, list[int]] = {}
     for i, bg in enumerate(backgrounds):
+        if regions[i]["kind"] == "portrait":
+            continue   # judged separately below: a photo is not text
         shade = "dark" if bg < BACKGROUND_SPLIT else "light"
         name = f"MRZ {shade}" if regions[i]["kind"] == "mrz" else shade
         groups.setdefault(name, []).append(i)
@@ -201,6 +230,19 @@ def run(path: str, ocr_boxes: list[dict],
         for i in idx:
             group_median[i] = med
         bad.extend(idx[j] for j in outlier_indices(vals))
+    portrait_ratio: dict[int, float] = {}
+    text_idx = [i for i in groups.get("light", []) if regions[i]["kind"] == "text"]
+    for i, r in enumerate(regions):
+        if r["kind"] != "portrait" or len(text_idx) < MIN_REGIONS:
+            continue
+        ratio = lambda b: region_scores(ela, [b])[0] / max(region_scores(grad, [b])[0], 1e-6)
+        text_med = max(float(np.median([ratio(regions[j]["box"]) for j in text_idx])),
+                       TEXT_RATIO_FLOOR)
+        rel = ratio(r["box"]) / text_med
+        portrait_ratio[i] = round(rel, 2)
+        group_median[i] = float(np.median([scores[j] for j in text_idx]))
+        if scores[i] >= PORTRAIT_ELA_MIN and rel > PORTRAIT_RATIO_MAX:
+            bad.append(i)
     bad.sort()
     for i in bad:
         regions[i]["suspect"] = True
@@ -213,12 +255,15 @@ def run(path: str, ocr_boxes: list[dict],
         basis = (f"against a median of {median:.2f} for the other regions on a similar "
                  f"background")
         if r["kind"] == "portrait":
+            rel = portrait_ratio[i]
             signals.append(Signal(
                 code="FF_PHOTO_TAMPERED", engine="fieldforensics", severity="high",
-                message=(f"The photograph region has a compression residual of "
-                         f"{r['score']} {basis}. "
-                         f"The portrait was pasted in after the document was produced."),
+                message=(f"The photograph carries {rel}x the compression residual per "
+                         f"unit of detail of the printed text fields (genuine photos "
+                         f"measure under {PORTRAIT_RATIO_MAX}x). The portrait was "
+                         f"pasted in after the document was produced."),
                 evidence={"box": list(r["box"]), "score": r["score"],
+                          "relative_residual": rel, "threshold": PORTRAIT_RATIO_MAX,
                           "document_median": round(median, 2)}))
         elif r["kind"] == "stamp":
             signals.append(Signal(
