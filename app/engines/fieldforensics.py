@@ -10,6 +10,18 @@ Z_THRESHOLD = 3.5      # modified z-score above which a field is an outlier
 MIN_REGIONS = 3        # fewer than this and "outlier" is meaningless
 MIN_AREA = 200         # ignore specks
 BACKGROUND_SPLIT = 128 # median box luminance below this = light-on-dark element
+BANNER_WIDTH_FRACTION = 0.8   # colour blobs this wide are banners, not stamps
+STAMP_OVERLAP_MAX = 0.5       # stamp candidates overlapping a printed region more are dropped
+
+def _overlap_fraction(stamp: tuple, other: tuple) -> float:
+    """Fraction of the stamp box's own area covered by the other box."""
+    sx, sy, sw, sh = stamp
+    ox, oy, ow, oh = other
+    iw = min(sx + sw, ox + ow) - max(sx, ox)
+    ih = min(sy + sh, oy + oh) - max(sy, oy)
+    if iw <= 0 or ih <= 0 or sw * sh <= 0:
+        return 0.0
+    return (iw * ih) / (sw * sh)
 
 def _clamp(box: tuple, w: int, h: int) -> tuple[int, int, int, int]:
     x, y, bw, bh = box
@@ -60,9 +72,12 @@ def stamp_regions(path: str) -> list[tuple]:
     mask = cv2.inRange(hsv, (0, 90, 40), (179, 255, 255))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    img_w = img.shape[1]
     out = []
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
+        if w >= BANNER_WIDTH_FRACTION * img_w:
+            continue   # a full-width banner or strip, not a stamp
         if w * h >= MIN_AREA * 4 and 0.2 <= w / max(h, 1) <= 6.0:
             out.append((x, y, w, h))
     return sorted(out, key=lambda b: b[2] * b[3], reverse=True)[:6]
@@ -88,7 +103,10 @@ def run(path: str, ocr_boxes: list[dict],
                         "kind": "portrait", "suspect": False, "score": 0.0})
 
     try:
+        printed = [r["box"] for r in regions]
         for sb in stamp_regions(path):
+            if any(_overlap_fraction(sb, pb) > STAMP_OVERLAP_MAX for pb in printed):
+                continue   # already represented by a text/portrait region
             regions.append({"box": sb, "label": "STAMP", "kind": "stamp",
                             "suspect": False, "score": 0.0})
     except Exception:

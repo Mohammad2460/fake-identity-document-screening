@@ -151,3 +151,29 @@ def test_retyped_dob_is_the_only_flagged_field(tampered_passport):
     flagged = [r for r in regions if r["suspect"]]
     assert len(flagged) == 1, [(r["label"], r["score"]) for r in flagged]
     assert "1994" in flagged[0]["label"]
+
+# --- Fix round 1: stamp detector must not accept banners or printed elements ---
+
+def test_stamp_regions_ignores_full_width_banner(tmp_path):
+    img = Image.new("RGB", (600, 400), "white")
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([0, 0, 600, 120], fill=(20, 60, 200))
+    draw.ellipse([260, 210, 340, 290], fill=(20, 60, 200))
+    p = tmp_path / "banner_and_stamp.png"
+    img.save(p)
+    stamps = ff.stamp_regions(str(p))
+    assert len(stamps) == 1
+    x, y, w, h = stamps[0]
+    assert w < 0.8 * 600 and 200 <= y <= 220
+
+def test_run_does_not_add_stamp_overlapping_text_box(tmp_path):
+    img = Image.new("RGB", (600, 400), "white")
+    ImageDraw.Draw(img).rectangle([110, 110, 170, 170], fill=(20, 60, 200))
+    p = tmp_path / "stamp_in_text.jpg"
+    img.save(p, "JPEG", quality=90)
+    ocr_boxes = [{"text": "COVERS", "confidence": 0.9, "box": (100, 100, 80, 80)},
+                 {"text": "A", "confidence": 0.9, "box": (300, 100, 200, 40)},
+                 {"text": "B", "confidence": 0.9, "box": (300, 200, 200, 40)}]
+    assert ff.stamp_regions(str(p)), "fixture must yield a stamp candidate"
+    _, regions = ff.run(str(p), ocr_boxes)
+    assert regions and not [r for r in regions if r["kind"] == "stamp"]
