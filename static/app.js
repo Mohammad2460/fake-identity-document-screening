@@ -294,7 +294,7 @@ function renderResult(data, options = { moveFocus: true }) {
 
   renderVerdict(data, signals);
   renderExhibit(data.evidence_url, signals);
-  renderReasons(Array.isArray(data.top_reasons) ? data.top_reasons : []);
+  renderReasons(Array.isArray(data.top_reasons) ? data.top_reasons : [], signals);
   renderAllOutput(signals, Array.isArray(data.engine_errors) ? data.engine_errors : []);
 
   // Below 1100px the verdict moves above the form (CSS reads this class).
@@ -312,7 +312,7 @@ function prefersReducedMotion() {
 
 function renderVerdict(data, signals) {
   const band = BANDS[data.band] || BANDS.REVIEW;
-  const checksRun = new Set(signals.map((s) => s.engine)).size;
+  const checksRun = Array.isArray(data.engines_run) ? data.engines_run.length : 0;
 
   const caseStrip = [
     "CASE " + String(data.case_id || "").toUpperCase(),
@@ -342,7 +342,10 @@ function formatTimestamp(d) {
 function renderExhibit(evidenceUrl, signals) {
   const exhibit = $("exhibit");
   exhibit.replaceChildren();
-  if (!evidenceUrl) {
+  // Only ever load an evidence image the server names in its own format.
+  const validUrl = typeof evidenceUrl === "string"
+    && /^\/evidence\/[0-9a-f]{32}\.jpg$/.test(evidenceUrl);
+  if (!validUrl) {
     exhibit.hidden = true;
     return;
   }
@@ -401,12 +404,17 @@ function cardList(signals) {
     signals.map(signalCard));
 }
 
-function renderReasons(reasons) {
+function renderReasons(reasons, signals) {
   const section = $("reasons");
+  // Count every finding (non-info signal), not just the capped top reasons.
+  const nonInfo = signals.filter((s) => s.severity !== "info").length;
+  const findings = nonInfo + " " + plural(nonInfo, "finding", "findings");
+  const countText = nonInfo > reasons.length
+    ? "· top " + reasons.length + " of " + findings
+    : "· " + findings;
   const heading = el("h2", { class: "t-h2 section-heading" }, [
     "Why ",
-    el("span", { class: "count",
-                 text: "· " + reasons.length + " " + plural(reasons.length, "finding", "findings") }),
+    el("span", { class: "count", text: countText }),
   ]);
 
   const body = reasons.length

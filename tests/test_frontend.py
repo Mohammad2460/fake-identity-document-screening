@@ -63,8 +63,32 @@ def test_no_network_urls_in_static_files():
     assert offenders == []
 
 
-def test_app_js_never_uses_innerhtml():
-    assert "innerHTML" not in (STATIC / "app.js").read_text(encoding="utf-8")
+@pytest.mark.parametrize("forbidden", ["innerHTML", "outerHTML", "insertAdjacentHTML",
+                                       "document.write", 'HTML"]', "HTML']"])
+def test_app_js_never_injects_html(forbidden):
+    assert forbidden not in (STATIC / "app.js").read_text(encoding="utf-8")
+
+
+def test_app_js_counts_checks_from_engines_run():
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "engines_run" in js
+
+
+def test_app_js_validates_evidence_url_before_use():
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert r"/^\/evidence\/[0-9a-f]{32}\.jpg$/" in js
+
+
+def test_app_js_reasons_heading_counts_all_findings():
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert '"· top "' in js and "nonInfo" in js
+
+
+def test_index_has_inline_favicon_and_short_nationality_label(client):
+    html = client.get("/").text
+    assert '<link rel="icon" href="data:,">' in html
+    assert re.search(r'<label for="f-nationality"[^>]*>Nationality</label>', html)
+    assert 'placeholder="3-letter code, e.g. IND"' in html
 
 
 @pytest.mark.parametrize("token,hexval", COLOUR_TOKENS.items())

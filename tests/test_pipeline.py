@@ -181,3 +181,13 @@ def test_end_to_end_retyped_dob_is_flagged_with_evidence(dbfile, tampered_passpo
     assert result.evidence_path is not None
     assert os.path.exists(result.evidence_path)
     assert Path(result.evidence_path).resolve().parent == evidence_dir.resolve()
+
+
+def test_engines_run_lists_every_invoked_engine_for_fields_only(dbfile):
+    r = pipeline.screen(ScreeningInput(claimed={"full_name": "Jonathan Brewster"}), dbfile)
+    for name in ("identity", "watchlist", "velocity", "crossdoc"):
+        assert name in r.engines_run
+    for name in ("tamper", "metadata", "face", "fieldforensics", "ocr", "mrz"):
+        assert name not in r.engines_run
+    assert len(r.engines_run) == len(set(r.engines_run))
+    assert r.to_dict()["engines_run"] == r.engines_run

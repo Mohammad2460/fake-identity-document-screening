@@ -66,8 +66,14 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
     errors: list[str] = []
     doc_hash = None
     evidence_path = None
+    engines_run: list[str] = []
+
+    def ran(name):
+        if name not in engines_run:
+            engines_run.append(name)
 
     def collect(name, fn, *args):
+        ran(name)
         out, err = _safe(name, fn, *args)
         signals.extend(out)
         if err:
@@ -85,10 +91,12 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
     # 1. Text first. OCR discovers the MRZ lines and the field boxes everything else needs.
     mrz_lines, boxes = [], []
     if has_doc:
+        ran("ocr")
         mrz_lines, boxes = _ocr_document(inp.doc_path, inp.claimed, "passport", signals, errors)
 
     visa_mrz, visa_boxes = [], []
     if has_visa:
+        ran("ocr")
         visa_mrz, visa_boxes = _ocr_document(inp.visa_path, {}, "visa", signals, errors)
 
     # 2. MRZ check digits - the self-proving arithmetic.
@@ -117,6 +125,7 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
         collect("face", face.run, inp.doc_path, inp.selfie_path)
 
         # 6. The centerpiece: which field was altered, drawn onto an evidence image.
+        ran("fieldforensics")
         try:
             ff_signals, regions = fieldforensics.run(inp.doc_path, boxes, portrait_box)
             signals.extend(ff_signals)
@@ -129,6 +138,7 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
 
     # 7. Same analysis on the visa (reusing its OCR boxes) - catches a forged entry stamp.
     if has_visa:
+        ran("fieldforensics")
         try:
             v_signals, v_regions = fieldforensics.run(inp.visa_path, visa_boxes,
                                                       _portrait_box(inp.visa_path))
@@ -144,7 +154,8 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
 
     score, band = scoring.score_signals(signals)
     result = ScreeningResult(case_id=case_id, score=score, band=band, signals=signals,
-                             engine_errors=errors, evidence_path=evidence_path)
+                             engine_errors=errors, evidence_path=evidence_path,
+                             engines_run=engines_run)
 
     try:
         db.save_case(db_path, case_id, inp.claimed, score, band, signals, doc_hash)

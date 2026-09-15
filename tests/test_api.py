@@ -144,3 +144,9 @@ def test_upload_filenames_are_sanitised(client, filename):
     assert re.fullmatch(r"\.[a-z0-9]{1,5}", ext) or ext == ".bin"
     # never traverses out of the upload dir, never keeps the client path
     assert ".." not in name and "/" not in name
+
+
+def test_screen_response_includes_engines_run(client):
+    body = client.post("/api/screen", data={"full_name": "Jonathan Brewster"}).json()
+    assert isinstance(body["engines_run"], list)
+    assert "watchlist" in body["engines_run"]
