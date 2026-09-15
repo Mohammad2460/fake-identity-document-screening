@@ -83,6 +83,20 @@ def dob_on_document(claimed_dob: str, flat_blob: str) -> bool:
     flattened alphanumeric-uppercase OCR blob."""
     return any(c in flat_blob for c in dob_candidates(claimed_dob))
 
+_OCR_CONFUSION = str.maketrans({"O": "0", "I": "1"})
+
+def _normalize_number(value: str) -> str:
+    cleaned = re.sub(r"[^A-Z0-9]", "", value.upper())
+    return cleaned.translate(_OCR_CONFUSION)
+
+def number_on_document(claimed_number: str, flat_blob: str) -> bool:
+    """Exact substring match of the claimed document number against the
+    flattened OCR blob, both sides normalised for common OCR confusions
+    (O<->0, I<->1)."""
+    needle = _normalize_number(claimed_number)
+    haystack = _normalize_number(flat_blob)
+    return bool(needle) and needle in haystack
+
 def find_mrz_lines(lines: list[str]) -> list[str]:
     candidates = [ln.strip().upper().replace(" ", "") for ln in lines if ln and "<" in ln]
     return [ln for ln in candidates if MRZ_RE.match(ln)]
@@ -151,7 +165,7 @@ def run(path: str, claimed: dict) -> tuple[list[Signal], list[str], list[dict]]:
             ))
 
         value = re.sub(r"[\s\-/]", "", (claimed.get("passport_no") or "")).upper()
-        if value and len(value) >= 6 and fuzz.partial_ratio(value, flat) < 80:
+        if value and len(value) >= 6 and not number_on_document(value, flat):
             signals.append(Signal(
                 code="OCR_NUMBER_NOT_ON_DOCUMENT", engine="ocr", severity="medium",
                 message="The claimed passport number is not printed on the uploaded document.",

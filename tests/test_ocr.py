@@ -89,6 +89,14 @@ def test_dob_blob_rejects_non_matching_printed_form():
     blob = re.sub(r"[\s\-/]", "", "DATE OF BIRTH 12 AUG 1975".upper())
     assert ocr.dob_on_document("1974-08-12", blob) is False
 
+def test_number_off_by_one_char_is_rejected():
+    blob = re.sub(r"[\s\-/]", "", "PASSPORT NO L898902C4".upper())
+    assert ocr.number_on_document("L898902C3", blob) is False
+
+def test_number_ocr_confusable_o_and_zero_is_accepted():
+    blob = re.sub(r"[\s\-/]", "", "PASSPORT NO L8989O2C3".upper())
+    assert ocr.number_on_document("L898902C3", blob) is True
+
 def test_run_handles_missing_file():
     signals, mrz, boxes = ocr.run("/nope.png", {})
     assert "OCR_UNREADABLE" in [s.code for s in signals]
