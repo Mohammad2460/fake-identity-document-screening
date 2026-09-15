@@ -33,6 +33,21 @@ def extract_boxes(path: str) -> list[dict]:
         out.append({"text": text, "confidence": float(score), "box": box})
     return out
 
+def name_match_score(name: str, blob: str) -> float:
+    """Weakest-token match of a claimed name against the OCR text blob.
+
+    Every claimed name token of length >= 3 must score >= NAME_MATCH_THRESHOLD
+    (we use the min, not the max, so one matching token can't hide the rest of
+    a stolen document's name). If no token is long enough to score on its own
+    (e.g. "LI WU"), compare the whole normalised name against the blob instead
+    of defaulting to 0.
+    """
+    tokens = [part.upper() for part in name.split() if len(part) >= 3]
+    if not tokens:
+        whole = " ".join(name.upper().split())
+        return float(fuzz.partial_ratio(whole, blob)) if whole else 0.0
+    return float(min(fuzz.partial_ratio(part, blob) for part in tokens))
+
 def find_mrz_lines(lines: list[str]) -> list[str]:
     candidates = [ln.strip().upper().replace(" ", "") for ln in lines if ln and "<" in ln]
     return [ln for ln in candidates if MRZ_RE.match(ln)]
@@ -68,15 +83,21 @@ def run(path: str, claimed: dict) -> tuple[list[Signal], list[str], list[dict]]:
 
     name = (claimed.get("full_name") or "").strip()
     if name and avg_conf >= MIN_CONFIDENCE_TO_JUDGE:
-        best = max((fuzz.partial_ratio(part.upper(), blob)
-                    for part in name.split() if len(part) > 2), default=0)
+        best = name_match_score(name, blob)
         if best < NAME_MATCH_THRESHOLD:
+            tokens = [part.upper() for part in name.split() if len(part) >= 3]
+            if tokens:
+                weakest = min(tokens, key=lambda t: fuzz.partial_ratio(t, blob))
+            else:
+                weakest = " ".join(name.upper().split())
             signals.append(Signal(
                 code="OCR_NAME_NOT_ON_DOCUMENT", engine="ocr", severity="high",
                 message=(f"The claimed name {name!r} does not appear in the text printed "
-                         f"on the uploaded document (best match {best:.0f}%). The applicant "
-                         f"may be presenting another person's document."),
-                evidence={"claimed_name": name, "best_match_pct": round(best, 1)},
+                         f"on the uploaded document (weakest-matching part {weakest!r}, "
+                         f"{best:.0f}% match). The applicant may be presenting another "
+                         f"person's document."),
+                evidence={"claimed_name": name, "best_match_pct": round(best, 1),
+                          "weakest_token": weakest},
             ))
         else:
             signals.append(Signal(

@@ -61,6 +61,20 @@ def test_name_mismatch_is_high_not_critical(text_image):
     hit = [s for s in signals if s.code == "OCR_NAME_NOT_ON_DOCUMENT"][0]
     assert hit.severity == "high"
 
+def test_name_partial_match_is_flagged(text_image):
+    signals, _, _ = ocr.run(text_image, {"full_name": "Anna Smith"})
+    assert "OCR_NAME_NOT_ON_DOCUMENT" in [s.code for s in signals]
+
+def test_name_score_helper_uses_min_across_tokens():
+    blob = "ANNA MARIA ERIKSSON"
+    score = ocr.name_match_score("Anna Smith", blob)
+    assert score < ocr.NAME_MATCH_THRESHOLD
+
+def test_name_score_helper_short_tokens_use_whole_name():
+    blob = "SURNAME LI GIVEN WU"
+    score = ocr.name_match_score("LI WU", blob)
+    assert score > 0
+
 def test_run_handles_missing_file():
     signals, mrz, boxes = ocr.run("/nope.png", {})
     assert "OCR_UNREADABLE" in [s.code for s in signals]
