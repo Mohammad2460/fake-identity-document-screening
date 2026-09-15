@@ -210,6 +210,7 @@ Append one line per completed task: `hh:mm — T<n> done — note`
 2026-09-15 — Code review found 9 bugs (worst: capitalised sanctioned names bypassed watchlist; bad OCR character crashed MRZ; composite check digit unchecked). All 9 fixed, re-reviewed, 72/72 tests. Pushed to GitHub.
 2026-09-15 — Added `docs/TEAM_GUIDE.md`: plain-language roles for teammates who don't use Claude.
 2026-09-15 — Session 2: T9 OCR ✅, T10 field-level forensics (red box) ✅, T11 face ✅. 103/103 tests. Visual check found & fixed header false positive in T10. Found T8 false-alarms on genuine passports (blocking before T16).
+2026-09-15 — Checkpoint 2 code review: 8 bugs fixed (worst: "Anna Smith" accepted on Anna Maria Eriksson's passport; one-digit-changed passport number passed; genuine DOBs flagged; sideways phone photos misplaced red boxes). 119/119 tests. Pushed.
 ```
 
 ### Resume instructions for a new session
