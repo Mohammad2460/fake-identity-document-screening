@@ -19,7 +19,14 @@ def main() -> None:
             print(f"[skip] {name}")
             continue
         print(f"[get ] {name}")
-        urllib.request.urlretrieve(url, dest)
+        part = dest + ".part"
+        try:
+            urllib.request.urlretrieve(url, part)
+            os.replace(part, dest)
+        except Exception:
+            if os.path.exists(part):
+                os.remove(part)
+            raise
         print(f"[ok  ] {name} ({os.path.getsize(dest) // 1024} KB)")
 
 if __name__ == "__main__":
