@@ -27,7 +27,10 @@ def extract_boxes(path: str) -> list[dict]:
     out = []
     for item in result:
         poly, text, score = item[0], item[1], item[2]
-        out.append({"text": text, "confidence": float(score), "box": _poly_to_box(poly)})
+        box = _poly_to_box(poly)
+        if box[2] <= 0 or box[3] <= 0:
+            continue
+        out.append({"text": text, "confidence": float(score), "box": box})
     return out
 
 def find_mrz_lines(lines: list[str]) -> list[str]:

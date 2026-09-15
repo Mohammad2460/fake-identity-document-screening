@@ -65,3 +65,31 @@ def test_run_handles_missing_file():
     signals, mrz, boxes = ocr.run("/nope.png", {})
     assert "OCR_UNREADABLE" in [s.code for s in signals]
     assert mrz == [] and boxes == []
+
+def test_extract_boxes_filters_degenerate_point_polygon(monkeypatch):
+    stub = lambda path: (
+        [
+            [[[10, 10], [10, 10], [10, 10], [10, 10]], "DOT", 0.9],
+            [[[0, 0], [50, 0], [50, 20], [0, 20]], "GOOD", 0.95],
+        ],
+        None,
+    )
+    monkeypatch.setattr(ocr, "_engine", lambda: stub)
+    boxes = ocr.extract_boxes("any.png")
+    assert len(boxes) == 1
+    assert boxes[0]["text"] == "GOOD"
+    assert boxes[0]["box"] == (0, 0, 50, 20)
+
+def test_extract_boxes_filters_degenerate_horizontal_line(monkeypatch):
+    stub = lambda path: (
+        [
+            [[[0, 5], [40, 5], [40, 5], [0, 5]], "LINE", 0.9],
+            [[[0, 0], [50, 0], [50, 20], [0, 20]], "GOOD", 0.95],
+        ],
+        None,
+    )
+    monkeypatch.setattr(ocr, "_engine", lambda: stub)
+    boxes = ocr.extract_boxes("any.png")
+    assert len(boxes) == 1
+    assert boxes[0]["text"] == "GOOD"
+    assert boxes[0]["box"] == (0, 0, 50, 20)
