@@ -2,8 +2,13 @@
 import functools
 import os
 import re
+from datetime import datetime
 from rapidfuzz import fuzz
 from app.models import Signal
+
+DOB_INPUT_FORMATS = ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y")
+MONTH_ABBR = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+              "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 
 MRZ_RE = re.compile(r"^[A-Z0-9<]{25,}$")
 NAME_MATCH_THRESHOLD = 80
@@ -47,6 +52,36 @@ def name_match_score(name: str, blob: str) -> float:
         whole = " ".join(name.upper().split())
         return float(fuzz.partial_ratio(whole, blob)) if whole else 0.0
     return float(min(fuzz.partial_ratio(part, blob) for part in tokens))
+
+def dob_candidates(claimed_dob: str) -> list[str]:
+    """Printed forms a genuine passport might use for this date of birth.
+
+    Tries "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y" in turn; returns [] if none parse
+    (the identity engine already flags an unparseable claimed DOB).
+    """
+    parsed = None
+    for fmt in DOB_INPUT_FORMATS:
+        try:
+            parsed = datetime.strptime(claimed_dob, fmt)
+            break
+        except (ValueError, TypeError):
+            continue
+    if parsed is None:
+        return []
+    month = MONTH_ABBR[parsed.month - 1]
+    return [
+        parsed.strftime("%Y%m%d"),
+        parsed.strftime("%d%m%Y"),
+        parsed.strftime("%m%d%Y"),
+        parsed.strftime("%y%m%d"),
+        f"{parsed.day:02d}{month}{parsed.year}",
+        f"{parsed.day:02d}{month}{parsed.strftime('%y')}",
+    ]
+
+def dob_on_document(claimed_dob: str, flat_blob: str) -> bool:
+    """True if any candidate printed form of claimed_dob is a substring of the
+    flattened alphanumeric-uppercase OCR blob."""
+    return any(c in flat_blob for c in dob_candidates(claimed_dob))
 
 def find_mrz_lines(lines: list[str]) -> list[str]:
     candidates = [ln.strip().upper().replace(" ", "") for ln in lines if ln and "<" in ln]
@@ -106,16 +141,22 @@ def run(path: str, claimed: dict) -> tuple[list[Signal], list[str], list[dict]]:
 
     if avg_conf >= MIN_CONFIDENCE_TO_JUDGE:
         flat = re.sub(r"[\s\-/]", "", blob)
-        for field, code, label in (("dob", "OCR_DOB_NOT_ON_DOCUMENT", "date of birth"),
-                                   ("passport_no", "OCR_NUMBER_NOT_ON_DOCUMENT",
-                                    "passport number")):
-            value = re.sub(r"[\s\-/]", "", (claimed.get(field) or "")).upper()
-            if value and len(value) >= 6 and fuzz.partial_ratio(value, flat) < 80:
-                signals.append(Signal(
-                    code=code, engine="ocr", severity="medium",
-                    message=f"The claimed {label} is not printed on the uploaded document.",
-                    evidence={field: value},
-                ))
+
+        dob = (claimed.get("dob") or "").strip()
+        if dob and dob_candidates(dob) and not dob_on_document(dob, flat):
+            signals.append(Signal(
+                code="OCR_DOB_NOT_ON_DOCUMENT", engine="ocr", severity="medium",
+                message="The claimed date of birth is not printed on the uploaded document.",
+                evidence={"dob": dob},
+            ))
+
+        value = re.sub(r"[\s\-/]", "", (claimed.get("passport_no") or "")).upper()
+        if value and len(value) >= 6 and fuzz.partial_ratio(value, flat) < 80:
+            signals.append(Signal(
+                code="OCR_NUMBER_NOT_ON_DOCUMENT", engine="ocr", severity="medium",
+                message="The claimed passport number is not printed on the uploaded document.",
+                evidence={"passport_no": value},
+            ))
 
     if mrz_lines:
         signals.append(Signal(

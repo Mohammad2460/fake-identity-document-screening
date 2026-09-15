@@ -1,3 +1,4 @@
+import re
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 from app.engines import ocr
@@ -74,6 +75,19 @@ def test_name_score_helper_short_tokens_use_whole_name():
     blob = "SURNAME LI GIVEN WU"
     score = ocr.name_match_score("LI WU", blob)
     assert score > 0
+
+def test_dob_candidates_cover_common_printed_forms():
+    candidates = ocr.dob_candidates("1974-08-12")
+    for expected in ("19740812", "12081974", "740812", "12AUG1974"):
+        assert expected in candidates
+
+def test_dob_blob_accepts_matching_printed_form():
+    blob = re.sub(r"[\s\-/]", "", "DATE OF BIRTH 12 AUG 1974".upper())
+    assert ocr.dob_on_document("1974-08-12", blob) is True
+
+def test_dob_blob_rejects_non_matching_printed_form():
+    blob = re.sub(r"[\s\-/]", "", "DATE OF BIRTH 12 AUG 1975".upper())
+    assert ocr.dob_on_document("1974-08-12", blob) is False
 
 def test_run_handles_missing_file():
     signals, mrz, boxes = ocr.run("/nope.png", {})
