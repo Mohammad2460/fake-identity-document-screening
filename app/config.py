@@ -26,3 +26,4 @@ MAX_SCORE = 100
 UPLOAD_DIR = "data/uploads"
 EVIDENCE_DIR = "data/evidence"
 DB_PATH = "cases.db"
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
