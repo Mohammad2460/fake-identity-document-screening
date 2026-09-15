@@ -2,21 +2,38 @@
 import os
 import cv2
 import numpy as np
+from PIL import Image
 from app.engines.tamper import ela_map
 from app.models import Signal
 
 Z_THRESHOLD = 3.5      # modified z-score above which a field is an outlier
 MIN_REGIONS = 3        # fewer than this and "outlier" is meaningless
 MIN_AREA = 200         # ignore specks
+BACKGROUND_SPLIT = 128 # median box luminance below this = light-on-dark element
+
+def _clamp(box: tuple, w: int, h: int) -> tuple[int, int, int, int]:
+    x, y, bw, bh = box
+    return max(0, int(x)), max(0, int(y)), min(w, int(x + bw)), min(h, int(y + bh))
 
 def region_scores(ela: np.ndarray, boxes: list[tuple]) -> list[float]:
     h, w = ela.shape[:2]
     out: list[float] = []
-    for (x, y, bw, bh) in boxes:
-        x0, y0 = max(0, int(x)), max(0, int(y))
-        x1, y1 = min(w, int(x + bw)), min(h, int(y + bh))
+    for box in boxes:
+        x0, y0, x1, y1 = _clamp(box, w, h)
         patch = ela[y0:y1, x0:x1]
         out.append(float(patch.mean()) if patch.size else 0.0)
+    return out
+
+def region_backgrounds(path: str, boxes: list[tuple]) -> list[float]:
+    """Median grayscale luminance inside each box (clamped like region_scores)."""
+    with Image.open(path) as im:
+        gray = np.asarray(im.convert("L"))
+    h, w = gray.shape[:2]
+    out: list[float] = []
+    for box in boxes:
+        x0, y0, x1, y1 = _clamp(box, w, h)
+        patch = gray[y0:y1, x0:x1]
+        out.append(float(np.median(patch)) if patch.size else 255.0)
     return out
 
 def outlier_indices(values: list[float], z_threshold: float = Z_THRESHOLD) -> list[int]:
@@ -84,8 +101,10 @@ def run(path: str, ocr_boxes: list[dict],
                      f"comparison needs at least {MIN_REGIONS}."))], [])
 
     try:
-        ela = ela_map(path)
-        scores = region_scores(ela, [r["box"] for r in regions])
+        ela = ela_map(path, channel="luma")
+        boxes = [r["box"] for r in regions]
+        scores = region_scores(ela, boxes)
+        backgrounds = region_backgrounds(path, boxes)
     except Exception as e:
         return ([Signal(code="FF_UNREADABLE", engine="fieldforensics", severity="low",
                         message=f"Field analysis failed: {type(e).__name__}: {e}")], [])
@@ -93,20 +112,42 @@ def run(path: str, ocr_boxes: list[dict],
     for r, sc in zip(regions, scores):
         r["score"] = round(float(sc), 2)
 
-    bad = outlier_indices(scores)
+    # Compare like with like: light-on-dark elements (header banners) only against
+    # each other, dark-on-light data fields only against each other.
+    groups = {"dark": [], "light": []}
+    for i, bg in enumerate(backgrounds):
+        groups["dark" if bg < BACKGROUND_SPLIT else "light"].append(i)
+
+    group_median: dict[int, float] = {}
+    bad: list[int] = []
+    skipped: list[str] = []
+    for name, idx in groups.items():
+        if not idx:
+            continue
+        if len(idx) < MIN_REGIONS:
+            skipped.append(f"{len(idx)} on a {name} background")
+            continue
+        vals = [scores[i] for i in idx]
+        med = float(np.median(vals))
+        for i in idx:
+            group_median[i] = med
+        bad.extend(idx[j] for j in outlier_indices(vals))
+    bad.sort()
     for i in bad:
         regions[i]["suspect"] = True
 
     signals: list[Signal] = []
-    median = float(np.median(scores))
 
     for i in bad:
         r = regions[i]
+        median = group_median[i]
+        basis = (f"against a median of {median:.2f} for the other regions on a similar "
+                 f"background")
         if r["kind"] == "portrait":
             signals.append(Signal(
                 code="FF_PHOTO_TAMPERED", engine="fieldforensics", severity="high",
                 message=(f"The photograph region has a compression residual of "
-                         f"{r['score']} against a document median of {median:.2f}. "
+                         f"{r['score']} {basis}. "
                          f"The portrait was pasted in after the document was produced."),
                 evidence={"box": list(r["box"]), "score": r["score"],
                           "document_median": round(median, 2)}))
@@ -114,7 +155,7 @@ def run(path: str, ocr_boxes: list[dict],
             signals.append(Signal(
                 code="FF_STAMP_TAMPERED", engine="fieldforensics", severity="high",
                 message=(f"A stamp or seal region has a compression residual of "
-                         f"{r['score']} against a document median of {median:.2f}. "
+                         f"{r['score']} {basis}. "
                          f"The stamp was added or altered after issue."),
                 evidence={"box": list(r["box"]), "score": r["score"],
                           "document_median": round(median, 2)}))
@@ -122,17 +163,20 @@ def run(path: str, ocr_boxes: list[dict],
             signals.append(Signal(
                 code="FF_FIELD_TAMPERED", engine="fieldforensics", severity="high",
                 message=(f"The field reading {r['label']!r} has a compression residual of "
-                         f"{r['score']} against a document median of {median:.2f} - it was "
+                         f"{r['score']} {basis} - it was "
                          f"edited after the rest of the document was produced."),
                 evidence={"field_text": r["label"], "box": list(r["box"]),
                           "score": r["score"], "document_median": round(median, 2)}))
 
     if not signals:
+        median = float(np.median(scores))
+        skip_note = (f" Background group(s) too small to compare were skipped "
+                     f"({'; '.join(skipped)} region(s))." if skipped else "")
         signals.append(Signal(
             code="FF_ALL_FIELDS_CONSISTENT", engine="fieldforensics", severity="info",
-            message=(f"All {len(regions)} analysed regions share a consistent compression "
-                     f"history (median residual {median:.2f}). No single field stands out "
-                     f"as edited."),
-            evidence={"regions_analysed": len(regions),
+            message=(f"{len(regions)} regions analysed; fields on a similar background share "
+                     f"a consistent compression history (median residual {median:.2f}). "
+                     f"No single field stands out as edited.{skip_note}"),
+            evidence={"regions_analysed": len(regions), "groups_skipped": skipped,
                       "document_median": round(median, 2)}))
     return signals, regions

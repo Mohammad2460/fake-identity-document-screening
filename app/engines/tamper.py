@@ -19,7 +19,15 @@ def _load_bgr(path: str) -> np.ndarray:
         img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
     return img
 
-def ela_map(path: str, quality: int = 90) -> np.ndarray:
+def ela_map(path: str, quality: int = 90, channel: str = "max") -> np.ndarray:
+    """Per-pixel re-compression residual.
+
+    channel="max": max absolute difference over R, G, B (whole-image tamper check).
+    channel="luma": absolute difference of the grayscale images, which ignores
+    chroma-subsampling error around light text on saturated colour.
+    """
+    if channel not in ("max", "luma"):
+        raise ValueError(f"unknown ELA channel {channel!r}; use 'max' or 'luma'")
     with Image.open(path) as im:
         original = im.convert("RGB")
         fd, tmp = tempfile.mkstemp(suffix=".jpg")
@@ -27,6 +35,10 @@ def ela_map(path: str, quality: int = 90) -> np.ndarray:
         try:
             original.save(tmp, "JPEG", quality=quality)
             with Image.open(tmp) as resaved:
+                if channel == "luma":
+                    return np.abs(np.asarray(original.convert("L"), np.int16)
+                                  - np.asarray(resaved.convert("L"), np.int16)
+                                  ).astype(np.float32)
                 diff = np.abs(np.asarray(original, np.int16)
                               - np.asarray(resaved.convert("RGB"), np.int16))
         finally:

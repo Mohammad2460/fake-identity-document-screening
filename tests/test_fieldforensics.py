@@ -86,3 +86,68 @@ def test_annotate_writes_an_image(tmp_path, doc_with_tampered_field):
                for i, b in enumerate(boxes)]
     out = annotate.draw_evidence(path, regions, str(tmp_path / "ev"))
     assert out and Image.open(out).size == Image.open(path).size
+
+
+# --- Fix round 1: realistic passport with a dark header banner (real OCR) ---
+
+from pathlib import Path
+from PIL import ImageDraw, ImageFont
+
+_FONT_CANDIDATES = ["/System/Library/Fonts/Supplemental/Arial.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+_TAMPER_CODES = {"FF_FIELD_TAMPERED", "FF_PHOTO_TAMPERED", "FF_STAMP_TAMPERED"}
+
+def _font_factory():
+    for f in _FONT_CANDIDATES:
+        if Path(f).exists():
+            return lambda size: ImageFont.truetype(f, size)
+    pytest.skip("no TrueType font available to render the passport")
+
+def _render_clean_passport(path, font):
+    img = Image.new("RGB", (900, 520), (236, 234, 224))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([0, 0, 900, 70], fill=(22, 52, 96))
+    draw.text((24, 18), "REPUBLIC OF UTOPIA  PASSPORT", font=font(30), fill="white")
+    rows = [("SURNAME", "ERIKSSON"), ("GIVEN NAMES", "ANNA MARIA"),
+            ("PASSPORT NO", "L898902C3"), ("NATIONALITY", "UTO"),
+            ("DATE OF BIRTH", "12/08/1974"), ("SEX", "F")]
+    for i, (label, value) in enumerate(rows):
+        y = 100 + i * 62
+        draw.text((300, y), label, font=font(14), fill=(110, 110, 110))
+        draw.text((300, y + 18), value, font=font(28), fill=(15, 15, 15))
+    img.save(path, "JPEG", quality=70)
+
+@pytest.fixture
+def clean_passport(tmp_path):
+    font = _font_factory()
+    p = tmp_path / "passport_clean.jpg"
+    _render_clean_passport(p, font)
+    return str(p)
+
+@pytest.fixture
+def tampered_passport(tmp_path):
+    font = _font_factory()
+    base = tmp_path / "passport_base.jpg"
+    _render_clean_passport(base, font)
+    img = Image.open(base).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    y = 100 + 4 * 62 + 18
+    draw.rectangle([296, y - 2, 720, y + 34], fill=(236, 234, 224))
+    draw.text((300, y), "12/08/1994", font=font(28), fill=(15, 15, 15))
+    p = tmp_path / "passport_tampered.jpg"
+    img.save(p, "JPEG", quality=97)
+    return str(p)
+
+def test_clean_passport_with_dark_header_flags_nothing(clean_passport):
+    from app.engines import ocr
+    _, _, boxes = ocr.run(clean_passport, {})
+    signals, _ = ff.run(clean_passport, boxes)
+    assert not _TAMPER_CODES & {s.code for s in signals}, [s.message for s in signals]
+
+def test_retyped_dob_is_the_only_flagged_field(tampered_passport):
+    from app.engines import ocr
+    _, _, boxes = ocr.run(tampered_passport, {})
+    _, regions = ff.run(tampered_passport, boxes)
+    flagged = [r for r in regions if r["suspect"]]
+    assert len(flagged) == 1, [(r["label"], r["score"]) for r in flagged]
+    assert "1994" in flagged[0]["label"]
