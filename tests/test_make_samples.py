@@ -40,3 +40,47 @@ def test_rendered_genuine_passport_ocr_to_mrz_is_valid_with_nationality_uto(tmp_
     assert codes == ["MRZ_ALL_CHECKS_PASS"]
     fields = pipeline._mrz_fields(lines, "passport")
     assert fields["nationality"] == "UTO" and fields["passport_no"] == "L898902C3"
+
+
+# --- T16c: photorealistic synthetic portraits (SFHQ, non-existent people) ---
+import os as _os
+import pytest as _pytest
+
+_needs_faces = _pytest.mark.skipif(
+    not (_os.path.exists("data/faces/sfhq_01.jpg")
+         and _os.path.exists("models/face_detection_yunet_2023mar.onnx")),
+    reason="data/faces crops or face models missing (run scripts.fetch_faces / download_models)")
+
+
+@_needs_faces
+def test_rendered_passport_portrait_is_detected_as_a_single_face(tmp_path):
+    from app.engines import face
+    from scripts.make_samples import BASE, draw_passport, save_issued, PORTRAIT_BOX
+    p = str(tmp_path / "clean.jpg")
+    save_issued(draw_passport(BASE), p)
+    kind, primary, _ = face.classify_portraits(face.detect_faces(p))
+    assert kind == "single"
+    x, y, w, h = primary["box"]
+    x0, y0, x1, y1 = PORTRAIT_BOX
+    assert x0 <= x + w / 2 <= x1 and y0 <= y + h / 2 <= y1
+
+
+@_needs_faces
+def test_rendered_visa_portrait_is_detected(tmp_path):
+    from app.engines import face
+    from scripts.make_samples import BASE, draw_visa, save_issued
+    p = str(tmp_path / "visa.jpg")
+    save_issued(draw_visa(BASE), p)
+    assert face.classify_portraits(face.detect_faces(p))[0] == "single"
+
+
+@_needs_faces
+def test_substituted_photo_is_a_different_person(tmp_path):
+    from app.engines import face
+    from scripts.make_samples import BASE, FACE_B, draw_passport, paste_portrait, save_issued, reload
+    genuine = str(tmp_path / "genuine.jpg")
+    forged = str(tmp_path / "forged.jpg")
+    save_issued(draw_passport(BASE), genuine)
+    save_issued(draw_passport(BASE), forged)
+    paste_portrait(reload(forged), FACE_B).save(forged, "JPEG", quality=97)
+    assert face.match_score(genuine, forged) < face.SAME_PERSON

@@ -113,12 +113,10 @@ def test_layout_aligned_glyph_repeats_are_not_copy_move(tmp_path):
 
 
 def test_substituted_photo_on_document_raises_ela_anomaly(tmp_path):
-    """Sample case 04: portrait repainted after issue, re-saved at q97."""
+    """Sample case 04: a different person's photo pasted in after issue, re-saved at q97."""
     p = str(tmp_path / "04.jpg")
     ms.save_issued(ms.draw_passport(ms.BASE), p)
-    img = ms.reload(p)
-    ms._draw_portrait(ImageDraw.Draw(img), skin=(200, 160, 130), bg=(190, 198, 214))
-    img.save(p, "JPEG", quality=97)
+    ms.paste_portrait(ms.reload(p), ms.FACE_B).save(p, "JPEG", quality=97)
     assert "TAMPER_ELA_ANOMALY" in [s.code for s in tamper.run(p)]
 
 

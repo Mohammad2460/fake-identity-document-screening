@@ -3,7 +3,7 @@ import io
 import json
 import os
 import random
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from app.engines.mrz import check_digit
 
 OUT = "data/samples"
@@ -57,12 +57,38 @@ def field_value_box(index: int) -> tuple[int, int, int, int]:
     y = FIELD_Y0 + index * FIELD_STEP + 18
     return FIELD_X - 4, y - 2, 420, 34
 
-def _draw_portrait(d: ImageDraw.ImageDraw, skin=(222, 190, 165), bg=(205, 205, 200)):
-    d.rectangle([50, 120, 250, 380], fill=bg)
-    d.ellipse([85, 150, 215, 320], fill=skin)
-    d.ellipse([115, 210, 137, 226], fill=(40, 30, 25))
-    d.ellipse([163, 210, 185, 226], fill=(40, 30, 25))
-    d.arc([125, 250, 175, 285], start=10, end=170, fill=(120, 70, 60), width=4)
+# Portraits are synthetic faces of NON-EXISTENT people: SFHQ dataset crops (MIT licence,
+# see data/faces/LICENSE-SFHQ.txt), fetched once by scripts/fetch_faces.py.
+FACES_DIR = "data/faces"
+FACE_A = "sfhq_01.jpg"   # the genuine holder, Anna Maria Eriksson
+FACE_B = "sfhq_02.jpg"   # a different (also non-existent) person - the substituted photo
+PORTRAIT_BOX = (50, 120, 250, 380)   # x0, y0, x1, y1
+
+def _portrait_image(face_file: str) -> Image.Image:
+    """The face cropped to the portrait box's aspect, resized, slightly desaturated."""
+    x0, y0, x1, y1 = PORTRAIT_BOX
+    bw, bh = x1 - x0, y1 - y0
+    with Image.open(os.path.join(FACES_DIR, face_file)) as im:
+        src = im.convert("RGB")
+    sw, sh = src.size
+    if sw / sh > bw / bh:             # too wide: trim the sides
+        cw = round(sh * bw / bh)
+        src = src.crop(((sw - cw) // 2, 0, (sw - cw) // 2 + cw, sh))
+    else:                             # too tall: trim top and bottom
+        ch = round(sw * bh / bw)
+        src = src.crop((0, (sh - ch) // 2, sw, (sh - ch) // 2 + ch))
+    src = src.resize((bw, bh), Image.LANCZOS)
+    grey = ImageOps.grayscale(src).convert("RGB")
+    return Image.blend(src, grey, 0.2)
+
+def paste_portrait(img: Image.Image, face_file: str = FACE_A) -> Image.Image:
+    """Put a photograph into the portrait box - as issued, or as a forger would.
+    Without data/faces (fetch not run) the box stays a flat grey placeholder."""
+    if not os.path.exists(os.path.join(FACES_DIR, face_file)):
+        ImageDraw.Draw(img).rectangle(PORTRAIT_BOX, fill=(205, 205, 200))
+        return img
+    img.paste(_portrait_image(face_file), PORTRAIT_BOX[:2])
+    return img
 
 def draw_passport(p: dict, mrz_override=None) -> Image.Image:
     img = Image.new("RGB", (W, H), (236, 234, 224))
@@ -76,7 +102,7 @@ def draw_passport(p: dict, mrz_override=None) -> Image.Image:
         y = FIELD_Y0 + i * FIELD_STEP
         d.text((FIELD_X, y), label.upper(), font=_font(14), fill=(110, 110, 110))
         d.text((FIELD_X, y + 18), str(value), font=_font(26), fill=(15, 15, 15))
-    _draw_portrait(d)
+    paste_portrait(img)
     l1, l2 = mrz_override or build_mrz("P", p["surname"], p["given"], p["doc_no"],
                                        p["nat"], p["dob"], p["sex"], p["expiry"])
     d.rectangle([0, H - 110, W, H], fill=(250, 250, 246))
@@ -102,7 +128,7 @@ def draw_visa(p: dict, *, visa_passport_no: str | None = None,
         y = FIELD_Y0 + i * 64
         d.text((FIELD_X, y), label.upper(), font=_font(14), fill=(110, 110, 110))
         d.text((FIELD_X, y + 18), value, font=_font(26), fill=(15, 15, 15))
-    _draw_portrait(d)
+    paste_portrait(img)
     if stamp:
         d.ellipse([720, 330, 930, 470], outline=(30, 60, 170), width=6)
         d.text((752, 382), "ENTRY  2026", font=_font(26), fill=(30, 60, 170))
@@ -170,12 +196,11 @@ def main() -> None:
     # 4. Photograph substituted
     path = f"{OUT}/04_photo_substituted.jpg"
     save_issued(draw_passport(BASE), path)
-    img = reload(path)
-    _draw_portrait(ImageDraw.Draw(img), skin=(200, 160, 130), bg=(190, 198, 214))
-    img.save(path, "JPEG", quality=97)
+    paste_portrait(reload(path), FACE_B).save(path, "JPEG", quality=97)
     m.append({"files": {"document": "04_photo_substituted.jpg"}, "claimed": ANNA,
               "expect": "REVIEW", "attack": "altered photograph",
-              "story": "Portrait replaced after issue. Photo region is a compression outlier."})
+              "story": "Portrait replaced after issue with a photo of a different person. "
+                       "The photo region is a compression outlier - boxed red."})
 
     # 5. Name retyped
     path = f"{OUT}/05_name_retyped.jpg"
