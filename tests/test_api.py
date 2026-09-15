@@ -80,6 +80,54 @@ def test_oversized_upload_is_rejected(client, tmp_path, monkeypatch):
         assert os.listdir(upload_dir) == []
 
 
+def test_oversized_second_upload_cleans_up_earlier_saved_files(client, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "MAX_UPLOAD_BYTES", 1024)
+    small = io.BytesIO(b"y" * 100)
+    big = io.BytesIO(b"x" * 4096)
+    r = client.post(
+        "/api/screen",
+        data={"full_name": "Orphan Check"},
+        files={
+            "document": ("doc.jpg", small, "image/jpeg"),
+            "visa": ("visa.jpg", big, "image/jpeg"),
+        },
+    )
+    assert r.status_code == 413
+    assert "error" in r.json()
+    upload_dir = config.UPLOAD_DIR
+    if os.path.isdir(upload_dir):
+        assert os.listdir(upload_dir) == []
+
+
+def test_evidence_endpoint_serves_existing_file(client):
+    from app import config
+    name = "ab" * 16 + ".jpg"  # 32 hex chars
+    os.makedirs(config.EVIDENCE_DIR, exist_ok=True)
+    with open(os.path.join(config.EVIDENCE_DIR, name), "wb") as fh:
+        fh.write(b"\xff\xd8\xff\xe0fakejpegbytes")
+    r = client.get(f"/evidence/{name}")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/jpeg"
+
+
+def test_evidence_endpoint_404_for_missing_valid_name(client):
+    name = "00" * 16 + ".jpg"
+    r = client.get(f"/evidence/{name}")
+    assert r.status_code == 404
+
+
+@pytest.mark.parametrize("name", ["evil.jpg", "abc.png", "../../etc/passwd.jpg"])
+def test_evidence_endpoint_404_for_invalid_name(client, name):
+    r = client.get(f"/evidence/{name}")
+    assert r.status_code == 404
+
+
+def test_root_serves_static_index(client):
+    r = client.get("/")
+    assert r.status_code == 200
+
+
 @pytest.mark.parametrize("filename", ["../../evil.jpg", "x.PHP5", "noext"])
 def test_upload_filenames_are_sanitised(client, filename):
     from app import config

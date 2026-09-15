@@ -3,6 +3,7 @@ import os
 import re
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -14,6 +15,8 @@ from app.pipeline import screen
 
 _EXT_RE = re.compile(r"^\.[a-z0-9]{1,5}$")
 _CHUNK_SIZE = 1024 * 1024
+_EVIDENCE_NAME_RE = re.compile(r"^[0-9a-f]{32}\.jpg$")
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
 def startup() -> None:
@@ -69,6 +72,12 @@ def _save_upload(upload: UploadFile | None, field: str) -> str | None:
     return dest
 
 
+def _cleanup(*paths: str | None) -> None:
+    for p in paths:
+        if p and os.path.exists(p):
+            os.remove(p)
+
+
 @app.post("/api/screen")
 async def api_screen(
     document: UploadFile | None = File(default=None),
@@ -82,11 +91,15 @@ async def api_screen(
     phone: str = Form(default=""),
     address: str = Form(default=""),
 ):
+    doc_path = visa_path = selfie_path = None
     try:
         doc_path = _save_upload(document, "document")
         visa_path = _save_upload(visa, "visa")
         selfie_path = _save_upload(selfie, "selfie")
     except UploadTooLarge as e:
+        # The failed field's own partial file is already removed by _save_upload;
+        # clean up anything saved earlier in this same request.
+        _cleanup(doc_path, visa_path, selfie_path)
         return JSONResponse(
             status_code=413,
             content={"error": f"{e.field} exceeds the 15 MB upload limit"},
@@ -121,11 +134,22 @@ def api_report(case_id: str) -> str:
     return report.render_case_html(config.DB_PATH, case_id)
 
 
+@app.get("/evidence/{name}")
+def evidence(name: str):
+    # Resolve config.EVIDENCE_DIR at request time (not import time) so runtime
+    # config changes (and test monkeypatches) take effect. Only annotate.py's
+    # own naming scheme (uuid4().hex + ".jpg") is servable.
+    if not _EVIDENCE_NAME_RE.fullmatch(name):
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    path = os.path.join(config.EVIDENCE_DIR, name)
+    if not os.path.isfile(path):
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    return FileResponse(path, media_type="image/jpeg")
+
+
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse("static/index.html")
+    return FileResponse(str(STATIC_DIR / "index.html"))
 
 
-os.makedirs(config.EVIDENCE_DIR, exist_ok=True)
-app.mount("/evidence", StaticFiles(directory=config.EVIDENCE_DIR), name="evidence")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
