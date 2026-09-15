@@ -6,9 +6,21 @@ import numpy as np
 from PIL import Image, ImageOps
 from app.models import Signal
 
-ELA_SUSPICIOUS = 6.0      # brightest-1% to median residual ratio
-CLONE_MATCH_MIN = 12      # self-matches with consistent offset
-NOISE_SPREAD_MAX = 4.5    # ratio of loudest tile variance to median tile variance
+# Calibration (task-16b, numbers in README "Calibration"). Every check compares like
+# with like, because a document is hard-edged text on flat paper - not a photograph.
+ELA_BLOCK = 16            # px; ELA is judged per block, never over flat paper
+ELA_TEXTURE_MIN = 20.0    # mean edge energy for a block to count as textured
+ELA_RATIO_FLOOR = 0.005   # residual-per-edge floor; idempotent re-saves have median 0
+ELA_SUSPICIOUS = 8.0      # block residual-per-edge vs document median (clean max 6.5)
+ELA_MIN_BLOCKS = 2        # a splice is a contiguous area, not one 16px block
+CLONE_MATCH_MIN = 12      # self-matches with one consistent offset, in one compact area
+CLONE_LAYOUT_TOL = 12     # px; offsets this close to an axis are typeset rows/columns
+CLONE_WINDOW = 96         # px; a cloned region's matches sit within one window
+CLONE_MIN_EXTENT = 24     # px; ...and span 2D, not one text line or one column
+NOISE_EDGE = 100.0        # blurred edge energy above which a pixel is print, not noise
+NOISE_SMOOTH_FRACTION = 0.6   # tiles with less smooth area are text-dominated: skipped
+NOISE_FLOOR = 0.5         # grey levels; below this sigma is JPEG quantisation, not sensor
+NOISE_SPREAD_MAX = 3.0    # loudest vs median smooth-area noise (clean max 1.2)
 
 def _load_bgr(path: str) -> np.ndarray:
     img = cv2.imread(path, cv2.IMREAD_COLOR)
@@ -45,13 +57,57 @@ def ela_map(path: str, quality: int = 90, channel: str = "max") -> np.ndarray:
             os.unlink(tmp)
     return diff.max(axis=2).astype(np.float32)
 
+def _gray(path: str) -> np.ndarray:
+    with Image.open(path) as im:
+        return np.asarray(ImageOps.exif_transpose(im).convert("L"), np.float32)
+
+def _block_means(a: np.ndarray, b: int) -> np.ndarray:
+    h, w = a.shape[0] - a.shape[0] % b, a.shape[1] - a.shape[1] % b
+    return a[:h, :w].reshape(h // b, b, w // b, b).mean(axis=(1, 3))
+
+def ela_block_ratios(path: str) -> np.ndarray:
+    """Per-block luma ELA residual per unit of edge energy, relative to the document.
+
+    Whole-image p99/median ELA is meaningless on a document: the median is flat
+    paper (residual ~0) and the p99 is text edges, so every page "looks spliced"
+    (rendered genuine passport: 8.0). Here each 16px block's residual is divided
+    by its own edge energy - a hard glyph edge and a hard pasted edge are then
+    compared on equal terms - and only textured blocks are judged. Returns a
+    block grid of ratio / document median (0 for flat blocks).
+    """
+    ela = ela_map(path, channel="luma")
+    g = _gray(path)
+    grad = np.abs(cv2.Sobel(g, cv2.CV_32F, 1, 0)) + np.abs(cv2.Sobel(g, cv2.CV_32F, 0, 1))
+    e, gr = _block_means(ela, ELA_BLOCK), _block_means(grad, ELA_BLOCK)
+    textured = gr > ELA_TEXTURE_MIN
+    if textured.sum() < 4:
+        return np.zeros_like(e)
+    ratio = np.where(textured, e / np.maximum(gr, 1e-6), 0.0)
+    base = max(float(np.median(ratio[textured])), ELA_RATIO_FLOOR)
+    return ratio / base
+
+def ela_anomaly(path: str) -> tuple[float, int]:
+    """(peak block ratio, blocks in the largest contiguous suspicious area)."""
+    k = ela_block_ratios(path)
+    if not k.size:
+        return 0.0, 0
+    mask = (k > ELA_SUSPICIOUS).astype(np.uint8)
+    n, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    largest = int(stats[1:, cv2.CC_STAT_AREA].max()) if n > 1 else 0
+    return float(k.max()), largest
+
 def ela_score(path: str) -> float:
-    m = ela_map(path)
-    hot = float(np.percentile(m, 99))
-    med = float(np.median(m))
-    return hot / max(med, 0.5)
+    return ela_anomaly(path)[0]
 
 def copy_move_score(path: str) -> tuple[float, int]:
+    """Largest group of self-matches sharing one offset AND one compact 2D area.
+
+    On a typeset page ORB self-matches are repeated glyphs and aligned fields:
+    their offsets lie on a row or column (measured on the genuine samples: every
+    top group had dx=0 or dy=0, 15-25 matches spread across whole text lines).
+    A cloned region moves a block of pixels, so its matches share an offset and
+    cluster in one window spanning both axes.
+    """
     img = _load_bgr(path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     orb = cv2.ORB_create(nfeatures=2000)
@@ -62,45 +118,68 @@ def copy_move_score(path: str) -> tuple[float, int]:
     matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
     knn = matcher.knnMatch(desc, desc, k=3)
 
-    offsets = []
+    groups: dict[tuple, list] = {}
     for group in knn:
         for m in group[1:]:                       # skip self-match at index 0
             p1 = np.array(kp[m.queryIdx].pt)
             p2 = np.array(kp[m.trainIdx].pt)
-            dist = np.linalg.norm(p1 - p2)
-            if dist > 40 and m.distance < 40:     # far apart but visually identical
-                offsets.append(tuple(np.round((p1 - p2) / 8).astype(int)))
+            d = p1 - p2
+            if np.linalg.norm(d) <= 40 or m.distance >= 40:
+                continue                          # near itself, or not visually identical
+            if min(abs(d[0]), abs(d[1])) <= CLONE_LAYOUT_TOL:
+                continue                          # same row or column: typeset layout
+            groups.setdefault(tuple(np.round(d / 8).astype(int)), []).append(p2)
 
-    if not offsets:
-        return 0.0, 0
-    counts = {}
-    for o in offsets:
-        counts[o] = counts.get(o, 0) + 1
-    best = max(counts.values())
+    best = 0
+    half = CLONE_WINDOW / 2
+    for pts in groups.values():
+        if len(pts) <= best:
+            continue
+        arr = np.asarray(pts)
+        for c in arr:
+            sel = arr[(np.abs(arr[:, 0] - c[0]) <= half) & (np.abs(arr[:, 1] - c[1]) <= half)]
+            if (len(sel) > best and np.ptp(sel[:, 0]) >= CLONE_MIN_EXTENT
+                    and np.ptp(sel[:, 1]) >= CLONE_MIN_EXTENT):
+                best = len(sel)
     return best / max(len(kp), 1) * 100, best
 
 def noise_spread(path: str) -> float:
+    """Loudest vs median noise level, measured only on the smooth area of each tile.
+
+    Laplacian variance per tile measured print, not noise: text tiles against
+    blank paper gave 12.6 on the genuine passport. Here print edges (found on a
+    blurred copy, so pixel noise itself is not mistaken for an edge) are masked
+    out, text-dominated tiles are skipped, and noise is a robust (MAD) sigma of
+    the high-pass residual - smooth area compared with smooth area.
+    """
     img = _load_bgr(path)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape
+    g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    residual = g - cv2.GaussianBlur(g, (5, 5), 0)
+    gb = cv2.GaussianBlur(g, (5, 5), 0)
+    edges = (np.abs(cv2.Sobel(gb, cv2.CV_32F, 1, 0))
+             + np.abs(cv2.Sobel(gb, cv2.CV_32F, 0, 1))) > NOISE_EDGE
+    edges = cv2.dilate(edges.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+    h, w = g.shape
     th, tw = h // 6, w // 6
-    variances = []
+    sigmas = []
     for r in range(6):
         for c in range(6):
-            tile = gray[r * th:(r + 1) * th, c * tw:(c + 1) * tw]
-            if tile.size:
-                variances.append(float(cv2.Laplacian(tile, cv2.CV_64F).var()))
-    variances = [v for v in variances if v > 0]
-    if len(variances) < 4:
+            sl = (slice(r * th, (r + 1) * th), slice(c * tw, (c + 1) * tw))
+            smooth = ~edges[sl]
+            if not smooth.size or smooth.mean() < NOISE_SMOOTH_FRACTION:
+                continue
+            v = residual[sl][smooth]
+            sigmas.append(1.4826 * float(np.median(np.abs(v - np.median(v)))))
+    if len(sigmas) < 4:
         return 1.0
-    return float(np.percentile(variances, 95)) / max(float(np.median(variances)), 0.5)
+    return float(np.percentile(sigmas, 95)) / max(float(np.median(sigmas)), NOISE_FLOOR)
 
 def run(path: str) -> list[Signal]:
     if not path or not os.path.exists(path) or path.lower().endswith(".pdf"):
         return [Signal(code="TAMPER_UNREADABLE", engine="tamper", severity="low",
                        message="No raster image available for pixel-level analysis.")]
     try:
-        ela = ela_score(path)
+        ela, ela_blocks = ela_anomaly(path)
         clone_pct, clone_matches = copy_move_score(path)
         spread = noise_spread(path)
     except Exception as e:
@@ -109,28 +188,30 @@ def run(path: str) -> list[Signal]:
 
     signals: list[Signal] = []
 
-    if ela > ELA_SUSPICIOUS:
+    if ela_blocks >= ELA_MIN_BLOCKS:
         signals.append(Signal(
             code="TAMPER_ELA_ANOMALY", engine="tamper", severity="high",
-            message=(f"Error Level Analysis ratio is {ela:.1f} (threshold {ELA_SUSPICIOUS}). "
-                     f"Part of this image has a different compression history from the rest, "
-                     f"which is what splicing looks like."),
-            evidence={"ela_ratio": round(ela, 2)},
+            message=(f"Error Level Analysis: an area of {ela_blocks} image blocks re-compresses "
+                     f"up to {ela:.1f}x worse, per unit of edge detail, than the rest of the "
+                     f"document (threshold {ELA_SUSPICIOUS}). That area has a different "
+                     f"compression history, which is what splicing looks like."),
+            evidence={"ela_ratio": round(ela, 2), "ela_blocks": ela_blocks},
         ))
 
     if clone_matches >= CLONE_MATCH_MIN:
         signals.append(Signal(
             code="TAMPER_COPY_MOVE", engine="tamper", severity="high",
             message=(f"{clone_matches} keypoints match another region of the same image "
-                     f"at a consistent offset — a cloned or duplicated region."),
+                     f"at one consistent offset within one compact area - a cloned or duplicated region."),
             evidence={"matches": clone_matches, "score": round(clone_pct, 2)},
         ))
 
     if spread > NOISE_SPREAD_MAX:
         signals.append(Signal(
             code="TAMPER_NOISE_INCONSISTENT", engine="tamper", severity="medium",
-            message=(f"Sensor-noise variance differs {spread:.1f}x across the image. "
-                     f"A single-capture photograph has near-uniform noise."),
+            message=(f"Noise level in smooth areas differs {spread:.1f}x across the image "
+                     f"(threshold {NOISE_SPREAD_MAX}). A single capture or print has near-"
+                     f"uniform noise; a pasted-in photograph carries its own."),
             evidence={"noise_spread": round(spread, 2)},
         ))
 

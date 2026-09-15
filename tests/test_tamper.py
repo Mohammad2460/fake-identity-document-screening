@@ -83,3 +83,59 @@ def test_run_handles_missing_file():
 def test_no_tamper_signal_exceeds_high(photo_like, spliced):
     for p in (photo_like, spliced):
         assert all(s.severity != "critical" for s in tamper.run(p))
+
+
+# --- task-16b item 3: document-aware tamper checks ---------------------------
+from PIL import ImageDraw
+from scripts import make_samples as ms
+
+ALT = dict(surname="OKONKWO", given="CHIDI EMEKA", doc_no="K4471093B", nat="UTO",
+           dob="881103", sex="M", expiry="330415")
+
+
+@pytest.mark.parametrize("identity", [ms.BASE, ALT], ids=["base", "alt"])
+@pytest.mark.parametrize("kind", ["passport", "visa"])
+@pytest.mark.parametrize("quality", [70, 90, 95])
+def test_clean_rendered_documents_emit_no_tamper_signal(tmp_path, identity, kind, quality):
+    """Typeset text repeats glyphs, has hard edges and flat paper - none of it is tampering."""
+    img = ms.draw_passport(identity) if kind == "passport" else ms.draw_visa(identity)
+    p = str(tmp_path / f"{kind}.jpg")
+    ms.save_issued(img, p, quality=quality)
+    codes = [s.code for s in tamper.run(p)]
+    assert codes == ["TAMPER_NONE_DETECTED"], codes
+
+
+def test_layout_aligned_glyph_repeats_are_not_copy_move(tmp_path):
+    p = str(tmp_path / "doc.jpg")
+    ms.save_issued(ms.draw_passport(ALT), p)
+    _, matches = tamper.copy_move_score(p)
+    assert matches < tamper.CLONE_MATCH_MIN
+
+
+def test_substituted_photo_on_document_raises_ela_anomaly(tmp_path):
+    """Sample case 04: portrait repainted after issue, re-saved at q97."""
+    p = str(tmp_path / "04.jpg")
+    ms.save_issued(ms.draw_passport(ms.BASE), p)
+    img = ms.reload(p)
+    ms._draw_portrait(ImageDraw.Draw(img), skin=(200, 160, 130), bg=(190, 198, 214))
+    img.save(p, "JPEG", quality=97)
+    assert "TAMPER_ELA_ANOMALY" in [s.code for s in tamper.run(p)]
+
+
+def test_noisy_camera_photo_pasted_into_document_is_noise_inconsistent(tmp_path):
+    rng = np.random.default_rng(5)
+    p = str(tmp_path / "doc.jpg")
+    ms.save_issued(ms.draw_passport(ms.BASE), p)
+    arr = np.asarray(ms.reload(p)).astype(float)
+    arr[120:380, 50:250] = np.clip(np.array([180, 160, 140])
+                                   + rng.normal(0, 12, (260, 200, 1)), 0, 255)
+    Image.fromarray(arr.astype(np.uint8)).save(p, "JPEG", quality=95)
+    assert "TAMPER_NOISE_INCONSISTENT" in [s.code for s in tamper.run(p)]
+
+
+def test_noisier_splice_on_a_photo_raises_noise_spread(tmp_path, photo_like):
+    arr = np.asarray(Image.open(photo_like).convert("L")).astype(float)
+    arr[40:200, 40:200] += np.random.default_rng(0).normal(0, 22, (160, 160))
+    p = str(tmp_path / "noisy_splice.jpg")
+    Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGB").save(p, "JPEG", quality=85)
+    assert tamper.noise_spread(p) > tamper.NOISE_SPREAD_MAX > tamper.noise_spread(photo_like)
