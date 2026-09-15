@@ -78,10 +78,15 @@ def _image_signals(path: str) -> list[Signal]:
         ))
 
     if not make and not model:
+        # Ruling (task-16b item 5): info, not a risk. Scanner output, e-passport chip
+        # images, issued visa PDFs rendered to images and messaging-app uploads all
+        # lack camera EXIF, so its absence says nothing about forgery - it fired on
+        # every genuine demo document. An editing-software tag (above) stays medium:
+        # that is positive evidence of an editor, not the absence of a camera.
         out.append(Signal(
-            code="META_NO_CAMERA_EXIF", engine="metadata", severity="medium",
-            message="No camera make/model in EXIF. The file was re-saved, screenshotted, "
-                    "or synthesised rather than photographed.",
+            code="META_NO_CAMERA_EXIF", engine="metadata", severity="info",
+            message="No camera make/model in EXIF. Normal for a scanned or issued "
+                    "document image; recorded for provenance, not scored.",
             evidence={"format": fmt, "size": list(size)},
         ))
     else:
