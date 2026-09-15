@@ -85,13 +85,21 @@ def test_mrz_fields_normalises_lowercase_spaced_lines():
     assert f["dob"] == "740812"
 
 
-def test_mrz_fields_for_visa_omits_passport_no():
+def test_mrz_fields_for_visa_uses_personal_number_not_own_doc_number():
     """The MRV line-2 document number is the visa's own number, not the passport's -
-    it must not be compared as a passport number (checkpoint-3 ruling 1)."""
+    it must not be compared as a passport number (checkpoint-3 ruling 1). The
+    passport it was issued against instead comes from the personal-number field
+    (R2)."""
     f = pipeline._mrz_fields([_L1, _L2], "visa")
-    assert f["passport_no"] is None
+    assert f["passport_no"] == "ZE184226B"
     assert f["full_name"] == "ANNA MARIA ERIKSSON"
     assert f["dob"] == "740812"
+
+
+def test_mrz_fields_for_visa_with_empty_personal_number_omits_passport_no():
+    visa_l2 = "V123456789UTO7408122F1204159<<<<<<<<<<<<<<08"
+    f = pipeline._mrz_fields([_L1, visa_l2], "visa")
+    assert f["passport_no"] is None
 
 
 def test_genuine_passport_and_visa_with_different_visa_number_is_not_rejected(dbfile):
@@ -106,6 +114,25 @@ def test_genuine_passport_and_visa_with_different_visa_number_is_not_rejected(db
         pipeline._mrz_fields(visa_lines, "visa"),
     ])
     assert "XDOC_PASSPORT_NO_MISMATCH" not in [s.code for s in signals]
+
+
+def test_visa_personal_number_field_is_used_as_issued_against_passport_no():
+    """R2: the visa MRZ's personal-number field (TD3 line 2 chars 28-41) carries
+    the passport it was issued against. When it disagrees with the passport's own
+    MRZ number, that is a critical cross-document mismatch."""
+    passport_lines = [_L1, _L2]
+    visa_l2 = "V123456789UTO7408122F1204159X47281956<<<<<08"
+    visa_lines = [_L1, visa_l2]
+
+    f = pipeline._mrz_fields(visa_lines, "visa")
+    assert f["passport_no"] == "X47281956"
+
+    signals = crossdoc.run([
+        pipeline._mrz_fields(passport_lines, "passport"),
+        f,
+    ])
+    hit = [s for s in signals if s.code == "XDOC_PASSPORT_NO_MISMATCH"]
+    assert hit and hit[0].severity == "critical"
 
 
 def test_mrz_passport_no_vs_claimed_mismatch_is_still_critical():

@@ -21,9 +21,16 @@ def test_minor_misspelling_matches():
     assert "WL_MATCH" in [s.code for s in signals]
 
 def test_near_miss_is_review_not_match():
-    signals = watchlist.run({"full_name": "Anna Maria Eriksson"})
+    signals = watchlist.run({"full_name": "Karin Lovisa Bergqvist"})
     codes = [s.code for s in signals]
     assert "WL_NEAR_MATCH" in codes and "WL_MATCH" not in codes
+
+
+def test_demo_traveller_name_does_not_near_match_watchlist():
+    """R1: the demo traveller Anna Maria Eriksson must not resemble any watchlist
+    entry closely enough to trigger a medium/high/critical signal."""
+    signals = watchlist.run({"full_name": "Anna Maria Eriksson"})
+    assert not [s for s in signals if s.severity in ("medium", "high", "critical")]
 
 def test_unrelated_name_is_clear():
     signals = watchlist.run({"full_name": "Jonathan Michael Brewster"})

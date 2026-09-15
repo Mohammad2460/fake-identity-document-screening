@@ -47,8 +47,14 @@ def _mrz_fields(lines: list[str], label: str) -> dict | None:
         return None
     # A visa's MRZ line-2 document number (ICAO 9303 Part 7) is the visa's OWN
     # number, not the passport it was issued against - it must never be compared
-    # as a passport number (checkpoint-3 ruling 1).
-    passport_no = None if label == "visa" else f["doc_number"]
+    # as a passport number (checkpoint-3 ruling 1). The passport it was issued
+    # against travels in the personal-number / optional-data field instead
+    # (task-16a ruling R2).
+    if label == "visa":
+        personal = f["personal_number"].replace(mrz.FILLER, "")
+        passport_no = personal or None
+    else:
+        passport_no = f["doc_number"]
     return {"source": f"{label} MRZ", "full_name": f"{f['given_names']} {f['surname']}",
             "dob": f["dob"], "passport_no": passport_no, "nationality": f["nationality"]}
 
