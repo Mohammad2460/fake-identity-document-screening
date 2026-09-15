@@ -1,7 +1,115 @@
 <!doctype html>
-<html>
-  <head><meta charset="utf-8"><title>Document Screening</title></head>
-  <body>
-    <p>Placeholder — Task 15 builds the real UI.</p>
-  </body>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Document &amp; Identity Screening</title>
+  <link rel="preload" href="/static/fonts/IBMPlexSans-Variable-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="top-rule" aria-hidden="true"></div>
+
+  <header class="page-header">
+    <h1 class="t-h1">Document &amp; Identity Screening</h1>
+    <p class="subtitle">Passport and visa forgery examination · SIH26188</p>
+  </header>
+
+  <main id="layout" class="layout">
+
+    <!-- LEFT: what the officer submits -->
+    <section class="panel form-panel" aria-labelledby="form-heading">
+      <h2 id="form-heading" class="t-h2">Traveller details</h2>
+
+      <form id="screen-form" novalidate>
+        <div class="field">
+          <label for="f-full_name" class="t-label">Full name (as printed)</label>
+          <input id="f-full_name" name="full_name" type="text" autocomplete="off">
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="f-dob" class="t-label">Date of birth</label>
+            <input id="f-dob" name="dob" type="text" placeholder="YYYY-MM-DD" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="f-passport_no" class="t-label">Passport number</label>
+            <input id="f-passport_no" name="passport_no" type="text" autocomplete="off">
+          </div>
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label for="f-nationality" class="t-label">Nationality (3-letter code)</label>
+            <input id="f-nationality" name="nationality" type="text" placeholder="e.g. IND" maxlength="3" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="f-phone" class="t-label">Phone</label>
+            <input id="f-phone" name="phone" type="tel" autocomplete="off">
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="f-email" class="t-label">Email</label>
+          <input id="f-email" name="email" type="email" autocomplete="off">
+        </div>
+
+        <hr class="divider">
+
+        <h2 class="t-h2">Documents</h2>
+
+        <!-- Each drop zone wraps a real file input. The input covers the zone
+             invisibly, so clicking, keyboard focus and drag-and-drop all work
+             natively. app.js fills in the chosen file name and the error line. -->
+        <div class="field" data-file-field="document">
+          <span id="l-document" class="t-label">Passport image</span>
+          <div class="dropzone is-primary">
+            <input type="file" name="document" id="f-document" accept="image/*,.pdf" aria-labelledby="l-document" aria-describedby="h-document e-document">
+            <span id="h-document" class="dropzone-text">Choose file or drop here · JPG, PNG or PDF, up to 15 MB</span>
+            <button type="button" class="remove-btn" hidden>Remove</button>
+          </div>
+          <p id="e-document" class="field-error" hidden></p>
+        </div>
+
+        <div class="field" data-file-field="visa">
+          <span id="l-visa" class="t-label">Visa image — optional</span>
+          <div class="dropzone">
+            <input type="file" name="visa" id="f-visa" accept="image/*,.pdf" aria-labelledby="l-visa" aria-describedby="h-visa e-visa">
+            <span id="h-visa" class="dropzone-text">Choose file or drop here · JPG, PNG or PDF, up to 15 MB</span>
+            <button type="button" class="remove-btn" hidden>Remove</button>
+          </div>
+          <p id="e-visa" class="field-error" hidden></p>
+        </div>
+
+        <div class="field" data-file-field="selfie">
+          <span id="l-selfie" class="t-label">Selfie — optional</span>
+          <div class="dropzone">
+            <input type="file" name="selfie" id="f-selfie" accept="image/*,.pdf" aria-labelledby="l-selfie" aria-describedby="h-selfie e-selfie">
+            <span id="h-selfie" class="dropzone-text">Choose file or drop here · JPG, PNG or PDF, up to 15 MB</span>
+            <button type="button" class="remove-btn" hidden>Remove</button>
+          </div>
+          <p id="e-selfie" class="field-error" hidden></p>
+        </div>
+
+        <button type="submit" id="submit-btn" class="btn-primary">Screen traveller</button>
+        <p class="t-label offline-note">Runs offline on this device. No data leaves the machine.</p>
+      </form>
+    </section>
+
+    <!-- RIGHT: what the system concludes. Filled in entirely by app.js. -->
+    <section class="results" aria-labelledby="verdict-heading">
+      <div id="verdict" class="verdict is-empty" role="status" aria-live="polite">
+        <h2 id="verdict-heading" class="t-h2 verdict-title" tabindex="-1">No traveller screened yet</h2>
+        <p class="verdict-sentence">Submit a passport to see the verdict, the altered fields marked on the document, and every check that ran.</p>
+      </div>
+
+      <div id="exhibit" hidden></div>
+      <div id="reasons" hidden></div>
+      <div id="all-output" hidden></div>
+    </section>
+
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
 </html>
