@@ -2,7 +2,7 @@
 import os
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from app.engines.tamper import ela_map
 from app.models import Signal
 
@@ -60,7 +60,7 @@ def background_luminance(gray: np.ndarray, box: tuple) -> float:
 def region_backgrounds(path: str, boxes: list[tuple]) -> list[float]:
     """Background luminance around each box (see background_luminance)."""
     with Image.open(path) as im:
-        gray = np.asarray(im.convert("L"))
+        gray = np.asarray(ImageOps.exif_transpose(im).convert("L"))
     return [background_luminance(gray, box) for box in boxes]
 
 def outlier_indices(values: list[float], z_threshold: float = Z_THRESHOLD) -> list[int]:

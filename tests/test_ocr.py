@@ -102,8 +102,14 @@ def test_run_handles_missing_file():
     assert "OCR_UNREADABLE" in [s.code for s in signals]
     assert mrz == [] and boxes == []
 
-def test_extract_boxes_filters_degenerate_point_polygon(monkeypatch):
-    stub = lambda path: (
+@pytest.fixture
+def blank_image(tmp_path):
+    p = tmp_path / "any.png"
+    Image.new("RGB", (60, 30), "white").save(p)
+    return str(p)
+
+def test_extract_boxes_filters_degenerate_point_polygon(monkeypatch, blank_image):
+    stub = lambda img: (
         [
             [[[10, 10], [10, 10], [10, 10], [10, 10]], "DOT", 0.9],
             [[[0, 0], [50, 0], [50, 20], [0, 20]], "GOOD", 0.95],
@@ -111,13 +117,13 @@ def test_extract_boxes_filters_degenerate_point_polygon(monkeypatch):
         None,
     )
     monkeypatch.setattr(ocr, "_engine", lambda: stub)
-    boxes = ocr.extract_boxes("any.png")
+    boxes = ocr.extract_boxes(blank_image)
     assert len(boxes) == 1
     assert boxes[0]["text"] == "GOOD"
     assert boxes[0]["box"] == (0, 0, 50, 20)
 
-def test_extract_boxes_filters_degenerate_horizontal_line(monkeypatch):
-    stub = lambda path: (
+def test_extract_boxes_filters_degenerate_horizontal_line(monkeypatch, blank_image):
+    stub = lambda img: (
         [
             [[[0, 5], [40, 5], [40, 5], [0, 5]], "LINE", 0.9],
             [[[0, 0], [50, 0], [50, 20], [0, 20]], "GOOD", 0.95],
@@ -125,7 +131,10 @@ def test_extract_boxes_filters_degenerate_horizontal_line(monkeypatch):
         None,
     )
     monkeypatch.setattr(ocr, "_engine", lambda: stub)
-    boxes = ocr.extract_boxes("any.png")
+    boxes = ocr.extract_boxes(blank_image)
     assert len(boxes) == 1
     assert boxes[0]["text"] == "GOOD"
     assert boxes[0]["box"] == (0, 0, 50, 20)
+
+def test_extract_boxes_returns_empty_when_image_cannot_be_decoded():
+    assert ocr.extract_boxes("/nope-not-a-real-file.png") == []

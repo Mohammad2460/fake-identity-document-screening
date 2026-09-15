@@ -3,7 +3,7 @@ import os
 import tempfile
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 from app.models import Signal
 
 ELA_SUSPICIOUS = 6.0      # brightest-1% to median residual ratio
@@ -29,7 +29,7 @@ def ela_map(path: str, quality: int = 90, channel: str = "max") -> np.ndarray:
     if channel not in ("max", "luma"):
         raise ValueError(f"unknown ELA channel {channel!r}; use 'max' or 'luma'")
     with Image.open(path) as im:
-        original = im.convert("RGB")
+        original = ImageOps.exif_transpose(im).convert("RGB")
         fd, tmp = tempfile.mkstemp(suffix=".jpg")
         os.close(fd)
         try:

@@ -28,6 +28,21 @@ def test_ela_map_matches_image_shape(photo_like):
     m = tamper.ela_map(photo_like)
     assert m.shape[:2] == (256, 256)
 
+def test_ela_map_applies_exif_orientation(tmp_path):
+    """A 200x100 (w x h) image saved with EXIF Orientation=6 (rotate 90) should
+    be read the same way cv2.imread reads it — orientation-applied, i.e. what a
+    human sees — by both ela_map and cv2.imread."""
+    from PIL import Image as PILImage
+    img = PILImage.new("RGB", (200, 100), "white")
+    p = tmp_path / "rotated.jpg"
+    exif = img.getexif()
+    exif[274] = 6
+    img.save(p, "JPEG", exif=exif)
+
+    ela = tamper.ela_map(str(p))
+    cv_shape = cv2.imread(str(p)).shape[:2]
+    assert ela.shape == cv_shape == (200, 100)
+
 def test_spliced_region_raises_ela_score(photo_like, spliced):
     assert tamper.ela_score(spliced) > tamper.ela_score(photo_like)
 

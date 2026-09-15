@@ -3,6 +3,7 @@ import functools
 import os
 import re
 from datetime import datetime
+import cv2
 from rapidfuzz import fuzz
 from app.models import Signal
 
@@ -26,7 +27,10 @@ def _poly_to_box(poly) -> tuple[int, int, int, int]:
     return x, y, int(max(xs)) - x, int(max(ys)) - y
 
 def extract_boxes(path: str) -> list[dict]:
-    result, _ = _engine()(path)
+    img = cv2.imread(path, cv2.IMREAD_COLOR)
+    if img is None:
+        return []
+    result, _ = _engine()(img)
     if not result:
         return []
     out = []
