@@ -98,10 +98,10 @@ A judge uses it without you touching the keyboard.
 
 | Task | What | Status |
 |---|---|---|
-| T12 | Cross-document consistency · *stretch, cut first* | ⬜ |
-| T13 | Pipeline orchestrator with per-engine fault isolation | ⬜ |
-| T14 | API — `/api/screen`, `/api/cases` | ⬜ |
-| T15 | Frontend — verdict, reason cards, **annotated evidence image** | ⬜ |
+| T12 | Cross-document consistency · *stretch, cut first* | ✅ |
+| T13 | Pipeline orchestrator with per-engine fault isolation | ✅ |
+| T14 | API — `/api/screen`, `/api/cases` | ✅ |
+| T15 | Frontend — verdict, reason cards, **annotated evidence image** | 🟡 built + works in real browser; review found 4 fixes (wrong on-screen counts, XSS test, image URL check) — fix round next |
 
 **Gate — by hand in a browser:**
 - [ ] Clean passport → green CLEAR
@@ -122,8 +122,9 @@ A judge uses it without you touching the keyboard.
 | T16 | Sample generator — passport + visa, 7 fraud types | ⬜ |
 | T16.0 | ⚠️ Demo portraits must be **photo-realistic AI-generated faces of people who don't exist** (licence allows use). The face detector ignores drawn cartoon faces. Never a real person's photo. | ⬜ |
 | T16.1 | ⚠️ Add tests that a real (AI-generated) face IS detected and matched — only the "no face" paths are tested today. | ⬜ |
+| T16.2 | ⚠️ Demo name "Anna Maria Eriksson" partly matches a fake watchlist entry — change that watchlist entry so a genuine demo traveller shows no watchlist warning. | ⬜ |
 | T16.3 | **Calibration loop** — run all samples, retune T8/T10 thresholds | ⬜ |
-| T16.4 | ⚠️ **BLOCKING: rework T8 tamper for documents** — it currently raises 2 high + 1 medium alarms on a *genuine* passport (copy-move matches repeated letters; noise check reads flat background as tampering). Clean passport must come out CLEAR. | ⬜ |
+| T16.4 | ⚠️ **BLOCKING: rework T8 tamper for documents** (end-to-end today: genuine passport scores 49 = REVIEW) — it currently raises 2 high + 1 medium alarms on a *genuine* passport (copy-move matches repeated letters; noise check reads flat background as tampering). Clean passport must come out CLEAR. | ⬜ |
 | T17 | Batch CSV screening + dashboard · *stretch, cut second* | ⬜ |
 
 **Gate:**
@@ -210,6 +211,7 @@ Append one line per completed task: `hh:mm — T<n> done — note`
 2026-09-15 — Code review found 9 bugs (worst: capitalised sanctioned names bypassed watchlist; bad OCR character crashed MRZ; composite check digit unchecked). All 9 fixed, re-reviewed, 72/72 tests. Pushed to GitHub.
 2026-09-15 — Added `docs/TEAM_GUIDE.md`: plain-language roles for teammates who don't use Claude.
 2026-09-15 — Session 2: T9 OCR ✅, T10 field-level forensics (red box) ✅, T11 face ✅. 103/103 tests. Visual check found & fixed header false positive in T10. Found T8 false-alarms on genuine passports (blocking before T16).
+2026-09-15 — T12 cross-doc ✅, T13 pipeline ✅, T14 API ✅, T15 website built (offline fonts, no CDN, XSS-safe) and verified in a real browser; T15 fix round pending. 176 tests. NEXT: T15 fix round → checkpoint 3 review → push.
 2026-09-15 — Checkpoint 2 code review: 8 bugs fixed (worst: "Anna Smith" accepted on Anna Maria Eriksson's passport; one-digit-changed passport number passed; genuine DOBs flagged; sideways phone photos misplaced red boxes). 119/119 tests. Pushed.
 ```
 
