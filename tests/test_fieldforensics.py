@@ -188,3 +188,68 @@ def test_background_is_measured_around_the_field_not_inside_it(doc_with_tampered
     path, boxes, bad_idx = doc_with_tampered_field
     gray = np.asarray(Image.open(path).convert("L"))
     assert ff.background_luminance(gray, boxes[bad_idx]) >= 200
+
+
+# --- task-16b item 4: the generated demo samples, real OCR -------------------
+from scripts import make_samples as ms
+
+_ALT = dict(surname="OKONKWO", given="CHIDI EMEKA", doc_no="K4471093B", nat="UTO",
+            dob="881103", sex="M", expiry="330415")
+
+
+def _ff(path):
+    from app.engines import ocr
+    _, _, boxes = ocr.run(path, {})
+    signals, regions = ff.run(path, boxes)
+    return signals, [r for r in regions if r["suspect"]], regions
+
+
+def _retyped(tmp_path, field, value):
+    p = str(tmp_path / "forged.jpg")
+    ms.save_issued(ms.draw_passport(ms.BASE), p)
+    ms.retype_field(ms.reload(p), ms.FIELDS.index(field), value).save(p, "JPEG", quality=97)
+    return p
+
+
+@pytest.mark.parametrize("identity", [ms.BASE, _ALT], ids=["base", "alt"])
+@pytest.mark.parametrize("kind", ["passport", "visa"])
+def test_genuine_rendered_documents_flag_no_region(tmp_path, identity, kind):
+    p = str(tmp_path / f"{kind}.jpg")
+    img = ms.draw_passport(identity) if kind == "passport" else ms.draw_visa(identity)
+    ms.save_issued(img, p)
+    signals, flagged, _ = _ff(p)
+    assert not flagged, [(r["label"], r["score"]) for r in flagged]
+    assert not _TAMPER_CODES & {s.code for s in signals}
+
+
+def test_mrz_lines_are_their_own_peer_group(tmp_path):
+    p = str(tmp_path / "passport.jpg")
+    ms.save_issued(ms.draw_passport(ms.BASE), p)
+    _, _, regions = _ff(p)
+    assert len([r for r in regions if r["kind"] == "mrz"]) == 2
+
+
+def test_sample_dob_retyped_flags_exactly_the_dob_value(tmp_path):
+    signals, flagged, _ = _ff(_retyped(tmp_path, "Date of birth", "12/08/1994"))
+    assert [r["label"] for r in flagged] == ["12/08/1994"]
+    assert [s.code for s in signals] == ["FF_FIELD_TAMPERED"]
+
+
+def test_sample_surname_retyped_flags_exactly_the_surname(tmp_path):
+    _, flagged, _ = _ff(_retyped(tmp_path, "Surname", "SHARMA"))
+    assert [r["label"] for r in flagged] == ["SHARMA"]
+
+
+def test_sample_forged_visa_stamp_is_flagged_as_the_stamp(tmp_path):
+    p = str(tmp_path / "visa.jpg")
+    ms.save_issued(ms.draw_visa(ms.BASE, stamp=False), p)
+    img = ms.reload(p)
+    d = ImageDraw.Draw(img)
+    d.ellipse([720, 330, 930, 470], outline=(30, 60, 170), width=6)
+    d.text((752, 382), "ENTRY  2026", font=ms._font(26), fill=(30, 60, 170))
+    img.save(p, "JPEG", quality=97)
+    signals, flagged, _ = _ff(p)
+    assert [r["kind"] for r in flagged] == ["stamp"]
+    x, y, w, h = flagged[0]["box"]
+    assert x <= 725 and y <= 335 and x + w >= 925 and y + h >= 465   # whole stamp boxed
+    assert [s.code for s in signals] == ["FF_STAMP_TAMPERED"]

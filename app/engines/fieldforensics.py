@@ -1,5 +1,6 @@
 """Per-field tamper localization: which field on this document was altered."""
 import os
+import re
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
@@ -13,6 +14,16 @@ BACKGROUND_SPLIT = 128 # median background luminance below this = light-on-dark 
 BACKGROUND_RING = 8    # pixels around a box sampled as its background
 BANNER_WIDTH_FRACTION = 0.8   # colour blobs this wide are banners, not stamps
 STAMP_OVERLAP_MAX = 0.5       # stamp candidates overlapping a printed region more are dropped
+STAMP_LETTERING_MIN = 0.5     # a text box this far inside a stamp is the stamp's lettering
+# MRZ lines (ICAO OCR-B, '<' fillers) are a different printing element from the data
+# fields: dense monospace glyphs on their own strip. On the genuine sample their ELA
+# was 1.13-1.21 vs a data-field median of 0.60 (z 7-8), so they are compared only
+# with each other (task-16b item 4). Their integrity is owned by the MRZ check digits.
+_MRZ_TEXT = re.compile(r"^[A-Z0-9<]{20,}$")
+
+def _is_mrz_text(text: str) -> bool:
+    t = (text or "").upper().replace(" ", "")
+    return "<" in t and bool(_MRZ_TEXT.match(t))
 
 def _overlap_fraction(stamp: tuple, other: tuple) -> float:
     """Fraction of the stamp box's own area covered by the other box."""
@@ -107,12 +118,14 @@ def run(path: str, ocr_boxes: list[dict],
     for b in ocr_boxes or []:
         try:
             x, y, w, h = b["box"]
-            label = str(b.get("text", ""))[:32]
+            text = str(b.get("text", ""))
+            label = text[:32]
         except (KeyError, TypeError, ValueError, AttributeError):
             continue   # malformed box: skip it rather than break the engine
         if w * h >= MIN_AREA:
             regions.append({"box": (x, y, w, h), "label": label,
-                            "kind": "text", "suspect": False, "score": 0.0})
+                            "kind": "mrz" if _is_mrz_text(text) else "text",
+                            "suspect": False, "score": 0.0})
     if portrait_box and portrait_box[2] * portrait_box[3] >= MIN_AREA:
         regions.append({"box": tuple(portrait_box), "label": "PHOTOGRAPH",
                         "kind": "portrait", "suspect": False, "score": 0.0})
@@ -122,8 +135,21 @@ def run(path: str, ocr_boxes: list[dict],
         for sb in stamp_regions(path):
             if any(_overlap_fraction(sb, pb) > STAMP_OVERLAP_MAX for pb in printed):
                 continue   # already represented by a text/portrait region
-            regions.append({"box": sb, "label": "STAMP", "kind": "stamp",
-                            "suspect": False, "score": 0.0})
+            # A stamp's own lettering (OCR box inside the stamp) is part of the stamp.
+            # The stamp is judged on its lettering - text measured exactly like every
+            # other text field - rather than on its bounding box, which is mostly
+            # blank paper (forged sample: bbox 1.05, lettering 2.42, fields ~0.8).
+            # It is still drawn as the whole stamp.
+            lettering = [r for r in regions if r["kind"] == "text"
+                         and _overlap_fraction(r["box"], sb) >= STAMP_LETTERING_MIN]
+            for r in lettering:
+                regions.remove(r)
+            label = "STAMP"
+            if lettering:
+                label = f"STAMP {' '.join(r['label'] for r in lettering)}"[:32]
+            regions.append({"box": sb, "label": label, "kind": "stamp",
+                            "suspect": False, "score": 0.0,
+                            "score_boxes": [r["box"] for r in lettering] or [sb]})
     except Exception:
         pass   # stamps are a bonus; never let them break the engine
 
@@ -135,21 +161,31 @@ def run(path: str, ocr_boxes: list[dict],
 
     try:
         ela = ela_map(path, channel="luma")
-        boxes = [r["box"] for r in regions]
-        scores = region_scores(ela, boxes)
-        backgrounds = region_backgrounds(path, boxes)
+        with Image.open(path) as im:
+            gray = np.asarray(ImageOps.exif_transpose(im).convert("L"))
+        scores, backgrounds = [], []
+        for r in regions:
+            sboxes = r.get("score_boxes") or [r["box"]]
+            areas = [max(1, b[2] * b[3]) for b in sboxes]
+            vals = region_scores(ela, sboxes)
+            scores.append(sum(v * a for v, a in zip(vals, areas)) / sum(areas))
+            backgrounds.append(float(np.median([background_luminance(gray, b) for b in sboxes])))
     except Exception as e:
         return ([Signal(code="FF_UNREADABLE", engine="fieldforensics", severity="low",
                         message=f"Field analysis failed: {type(e).__name__}: {e}")], [])
 
     for r, sc in zip(regions, scores):
         r["score"] = round(float(sc), 2)
+        r.pop("score_boxes", None)
 
     # Compare like with like: light-on-dark elements (header banners) only against
     # each other, dark-on-light data fields only against each other.
-    groups = {"dark": [], "light": []}
+    # MRZ lines form their own group (see _MRZ_TEXT).
+    groups: dict[str, list[int]] = {}
     for i, bg in enumerate(backgrounds):
-        groups["dark" if bg < BACKGROUND_SPLIT else "light"].append(i)
+        shade = "dark" if bg < BACKGROUND_SPLIT else "light"
+        name = f"MRZ {shade}" if regions[i]["kind"] == "mrz" else shade
+        groups.setdefault(name, []).append(i)
 
     group_median: dict[int, float] = {}
     bad: list[int] = []
