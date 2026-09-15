@@ -79,9 +79,9 @@ The computer vision. **T10 is the centerpiece — protect its time.**
 |---|---|---|
 | T7 | Metadata — EXIF / PDF provenance | ✅ |
 | T8 | Tamper — whole-image ELA, copy-move, noise | ✅ |
-| T9 | OCR — text + **bounding boxes** (T10 depends on the boxes) | ⬜ |
-| T10 | **Field-level forensics** — which field was altered ⭐⭐ | ⬜ |
-| T11 | Face — portrait detection + selfie match | ⬜ |
+| T9 | OCR — text + **bounding boxes** (T10 depends on the boxes) | ✅ |
+| T10 | **Field-level forensics** — which field was altered ⭐⭐ | ✅ |
+| T11 | Face — portrait detection + selfie match | ✅ |
 
 **Gate:**
 - [ ] Full suite green
@@ -120,7 +120,10 @@ A judge uses it without you touching the keyboard.
 | Task | What | Status |
 |---|---|---|
 | T16 | Sample generator — passport + visa, 7 fraud types | ⬜ |
+| T16.0 | ⚠️ Demo portraits must be **photo-realistic AI-generated faces of people who don't exist** (licence allows use). The face detector ignores drawn cartoon faces. Never a real person's photo. | ⬜ |
+| T16.1 | ⚠️ Add tests that a real (AI-generated) face IS detected and matched — only the "no face" paths are tested today. | ⬜ |
 | T16.3 | **Calibration loop** — run all samples, retune T8/T10 thresholds | ⬜ |
+| T16.4 | ⚠️ **BLOCKING: rework T8 tamper for documents** — it currently raises 2 high + 1 medium alarms on a *genuine* passport (copy-move matches repeated letters; noise check reads flat background as tampering). Clean passport must come out CLEAR. | ⬜ |
 | T17 | Batch CSV screening + dashboard · *stretch, cut second* | ⬜ |
 
 **Gate:**
@@ -206,6 +209,7 @@ Append one line per completed task: `hh:mm — T<n> done — note`
 2026-09-15 — T7 metadata ✅, T8 tamper ✅ (57/57 tests). Checkpoint: code-review skill + first push to private GitHub repo `fake-identity-document-screening`.
 2026-09-15 — Code review found 9 bugs (worst: capitalised sanctioned names bypassed watchlist; bad OCR character crashed MRZ; composite check digit unchecked). All 9 fixed, re-reviewed, 72/72 tests. Pushed to GitHub.
 2026-09-15 — Added `docs/TEAM_GUIDE.md`: plain-language roles for teammates who don't use Claude.
+2026-09-15 — Session 2: T9 OCR ✅, T10 field-level forensics (red box) ✅, T11 face ✅. 103/103 tests. Visual check found & fixed header false positive in T10. Found T8 false-alarms on genuine passports (blocking before T16).
 ```
 
 ### Resume instructions for a new session
