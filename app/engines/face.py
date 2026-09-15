@@ -1,6 +1,7 @@
 """Portrait detection on the document and biometric match against a selfie."""
 import functools
 import os
+import threading
 import cv2
 import numpy as np
 from app.models import Signal
@@ -10,6 +11,11 @@ RECOGNIZER_PATH = "models/face_recognition_sface_2021dec.onnx"
 
 SAME_PERSON = 0.363     # OpenCV SFace documented cosine threshold
 DEFINITE_MISMATCH = 0.25
+
+# The detector/recognizer are cached singletons shared across requests; setInputSize+detect
+# (and alignCrop+feature) are not atomic, so concurrent calls with differently-sized images
+# could race and corrupt results. Serialize access to the models themselves.
+_MODEL_LOCK = threading.Lock()
 
 @functools.lru_cache(maxsize=1)
 def _detector():
@@ -28,9 +34,10 @@ def _read(path: str) -> np.ndarray:
 def detect_faces(path: str) -> list[dict]:
     img = _read(path)
     h, w = img.shape[:2]
-    det = _detector()
-    det.setInputSize((w, h))
-    _, faces = det.detect(img)
+    with _MODEL_LOCK:
+        det = _detector()
+        det.setInputSize((w, h))
+        _, faces = det.detect(img)
     if faces is None:
         return []
     return [{"box": [int(v) for v in f[:4]], "confidence": float(f[-1]), "raw": f}
@@ -38,8 +45,9 @@ def detect_faces(path: str) -> list[dict]:
 
 def _embedding(path: str, face_row: np.ndarray) -> np.ndarray:
     img = _read(path)
-    aligned = _recognizer().alignCrop(img, face_row)
-    return _recognizer().feature(aligned)
+    with _MODEL_LOCK:
+        aligned = _recognizer().alignCrop(img, face_row)
+        return _recognizer().feature(aligned)
 
 def match_score(doc_path: str, selfie_path: str) -> float | None:
     doc_faces = detect_faces(doc_path)

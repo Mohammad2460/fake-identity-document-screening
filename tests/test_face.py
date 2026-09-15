@@ -29,3 +29,13 @@ def test_run_without_selfie_does_not_emit_match_signals(blank):
 def test_run_handles_missing_files():
     signals = face.run("/nope.png", "/also-nope.png")
     assert "FACE_UNREADABLE" in [s.code for s in signals]
+
+def test_detect_faces_handles_repeated_resizing_of_shared_detector(tmp_path):
+    p1 = tmp_path / "a.png"
+    Image.new("RGB", (320, 320), "white").save(p1)
+    p2 = tmp_path / "b.png"
+    Image.new("RGB", (640, 200), "white").save(p2)
+
+    assert face.detect_faces(str(p1)) == []
+    assert face.detect_faces(str(p2)) == []
+    assert face.detect_faces(str(p1)) == []
