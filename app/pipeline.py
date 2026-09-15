@@ -45,8 +45,12 @@ def _mrz_fields(lines: list[str], label: str) -> dict | None:
         f = mrz.parse_td3(l1, l2)
     except Exception:
         return None
+    # A visa's MRZ line-2 document number (ICAO 9303 Part 7) is the visa's OWN
+    # number, not the passport it was issued against - it must never be compared
+    # as a passport number (checkpoint-3 ruling 1).
+    passport_no = None if label == "visa" else f["doc_number"]
     return {"source": f"{label} MRZ", "full_name": f"{f['given_names']} {f['surname']}",
-            "dob": f["dob"], "passport_no": f["doc_number"], "nationality": f["nationality"]}
+            "dob": f["dob"], "passport_no": passport_no, "nationality": f["nationality"]}
 
 
 def _portrait_box(path: str) -> tuple | None:
@@ -118,20 +122,22 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
     collect("crossdoc", crossdoc.run, sources)
 
     # 5. Pixel forensics on the passport image.
+    doc_regions: list | None = None
+    visa_regions: list | None = None
+
     if has_doc:
         portrait_box = _portrait_box(inp.doc_path)
         collect("metadata", metadata.run, inp.doc_path)
         collect("tamper", tamper.run, inp.doc_path)
         collect("face", face.run, inp.doc_path, inp.selfie_path)
 
-        # 6. The centerpiece: which field was altered, drawn onto an evidence image.
+        # 6. The centerpiece: which field was altered - regions kept, drawing deferred
+        # until we know whether the visa also has a suspect region (ruling: at most
+        # one evidence image per case).
         ran("fieldforensics")
         try:
-            ff_signals, regions = fieldforensics.run(inp.doc_path, boxes, portrait_box)
+            ff_signals, doc_regions = fieldforensics.run(inp.doc_path, boxes, portrait_box)
             signals.extend(ff_signals)
-            if regions:
-                evidence_path = annotate.draw_evidence(inp.doc_path, regions,
-                                                       config.EVIDENCE_DIR)
         except Exception as e:
             errors.append(f"fieldforensics: {type(e).__name__}: {e}")
             signals.append(_error_signal("fieldforensics", "Field-level analysis", e))
@@ -140,22 +146,33 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
     if has_visa:
         ran("fieldforensics")
         try:
-            v_signals, v_regions = fieldforensics.run(inp.visa_path, visa_boxes,
-                                                      _portrait_box(inp.visa_path))
+            v_signals, visa_regions = fieldforensics.run(inp.visa_path, visa_boxes,
+                                                          _portrait_box(inp.visa_path))
             for sg in v_signals:
                 sg.message = f"[visa] {sg.message}"
             signals.extend(sg for sg in v_signals if sg.severity != "info")
-            if any(r["suspect"] for r in v_regions):
-                evidence_path = annotate.draw_evidence(inp.visa_path, v_regions,
-                                                       config.EVIDENCE_DIR)
         except Exception as e:
             errors.append(f"fieldforensics[visa]: {type(e).__name__}: {e}")
             signals.append(_error_signal("fieldforensics", "Field-level analysis of the visa", e))
 
+    # 8. Exactly one evidence image, chosen after both analyses are in: the
+    # passport wins if it has a suspect region, else the visa, else the passport
+    # (all-green) if it was analysed at all, else no evidence.
+    evidence_source = None
+    if doc_regions and any(r["suspect"] for r in doc_regions):
+        evidence_path = annotate.draw_evidence(inp.doc_path, doc_regions, config.EVIDENCE_DIR)
+        evidence_source = "passport"
+    elif visa_regions and any(r["suspect"] for r in visa_regions):
+        evidence_path = annotate.draw_evidence(inp.visa_path, visa_regions, config.EVIDENCE_DIR)
+        evidence_source = "visa"
+    elif doc_regions:
+        evidence_path = annotate.draw_evidence(inp.doc_path, doc_regions, config.EVIDENCE_DIR)
+        evidence_source = "passport"
+
     score, band = scoring.score_signals(signals)
     result = ScreeningResult(case_id=case_id, score=score, band=band, signals=signals,
                              engine_errors=errors, evidence_path=evidence_path,
-                             engines_run=engines_run)
+                             evidence_source=evidence_source, engines_run=engines_run)
 
     try:
         db.save_case(db_path, case_id, inp.claimed, score, band, signals, doc_hash)

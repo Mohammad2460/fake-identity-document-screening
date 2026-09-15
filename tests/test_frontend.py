@@ -79,6 +79,14 @@ def test_app_js_validates_evidence_url_before_use():
     assert r"/^\/evidence\/[0-9a-f]{32}\.jpg$/" in js
 
 
+def test_app_js_uses_evidence_source_for_exhibit_label():
+    """checkpoint-3 ruling 2: the exhibit caption must come from the server's
+    evidence_source, not be guessed from scanning signal messages."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "evidence_source" in js
+    assert 'evidenceSource === "visa"' in js
+
+
 def test_app_js_reasons_heading_counts_all_findings():
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     assert '"· top "' in js and "nonInfo" in js

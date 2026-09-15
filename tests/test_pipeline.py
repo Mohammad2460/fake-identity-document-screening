@@ -6,6 +6,7 @@ import pytest
 from PIL import Image, ImageDraw, ImageFont
 
 from app import config, db, pipeline
+from app.engines import crossdoc
 from app.models import ScreeningInput, ScreeningResult
 
 
@@ -82,6 +83,37 @@ def test_mrz_fields_normalises_lowercase_spaced_lines():
     f = pipeline._mrz_fields(messy, "passport")
     assert f["passport_no"] == "L898902C3"
     assert f["dob"] == "740812"
+
+
+def test_mrz_fields_for_visa_omits_passport_no():
+    """The MRV line-2 document number is the visa's own number, not the passport's -
+    it must not be compared as a passport number (checkpoint-3 ruling 1)."""
+    f = pipeline._mrz_fields([_L1, _L2], "visa")
+    assert f["passport_no"] is None
+    assert f["full_name"] == "ANNA MARIA ERIKSSON"
+    assert f["dob"] == "740812"
+
+
+def test_genuine_passport_and_visa_with_different_visa_number_is_not_rejected(dbfile):
+    """checkpoint-3 ruling 1: visa doc number must not be compared as passport_no,
+    or every genuine passport+visa pair triggers a critical false positive."""
+    passport_lines = [_L1, _L2]
+    visa_l2 = "V123456789UTO7408122F1204159<<<<<<<<<<<<<<08"
+    visa_lines = [_L1, visa_l2]
+
+    signals = crossdoc.run([
+        pipeline._mrz_fields(passport_lines, "passport"),
+        pipeline._mrz_fields(visa_lines, "visa"),
+    ])
+    assert "XDOC_PASSPORT_NO_MISMATCH" not in [s.code for s in signals]
+
+
+def test_mrz_passport_no_vs_claimed_mismatch_is_still_critical():
+    claimed = {"source": "claimed", "full_name": "ANNA MARIA ERIKSSON",
+              "dob": "1974-08-12", "passport_no": "X99999999", "nationality": "UTO"}
+    signals = crossdoc.run([pipeline._mrz_fields([_L1, _L2], "passport"), claimed])
+    hit = [s for s in signals if s.code == "XDOC_PASSPORT_NO_MISMATCH"]
+    assert hit and hit[0].severity == "critical"
 
 
 def test_persistence_failure_is_recorded_not_raised(tmp_path):
@@ -181,6 +213,76 @@ def test_end_to_end_retyped_dob_is_flagged_with_evidence(dbfile, tampered_passpo
     assert result.evidence_path is not None
     assert os.path.exists(result.evidence_path)
     assert Path(result.evidence_path).resolve().parent == evidence_dir.resolve()
+
+
+# --- Checkpoint 3 ruling 2: single evidence image, chosen after both analyses ---
+
+def _stub_regions(suspect):
+    return [{"box": (0, 0, 10, 10), "suspect": suspect, "label": "x"}]
+
+
+def test_evidence_source_is_passport_when_both_have_suspect_regions(dbfile, tmp_path,
+                                                                     evidence_dir, monkeypatch):
+    doc = tmp_path / "doc.jpg"
+    visa = tmp_path / "visa.jpg"
+    Image.new("RGB", (64, 64), "white").save(doc, "JPEG")
+    Image.new("RGB", (64, 64), "white").save(visa, "JPEG")
+
+    def fake_ff(path, boxes, portrait_box):
+        suspect = path == str(doc)
+        return [], _stub_regions(suspect)
+    monkeypatch.setattr(pipeline.fieldforensics, "run", fake_ff)
+
+    r = pipeline.screen(ScreeningInput(claimed={"full_name": "A B"},
+                                       doc_path=str(doc), visa_path=str(visa)), dbfile)
+    assert r.evidence_source == "passport"
+    assert r.evidence_path is not None
+    assert len(list(evidence_dir.iterdir())) == 1
+
+
+def test_evidence_source_is_visa_when_only_visa_has_suspect_region(dbfile, tmp_path,
+                                                                    evidence_dir, monkeypatch):
+    doc = tmp_path / "doc.jpg"
+    visa = tmp_path / "visa.jpg"
+    Image.new("RGB", (64, 64), "white").save(doc, "JPEG")
+    Image.new("RGB", (64, 64), "white").save(visa, "JPEG")
+
+    def fake_ff(path, boxes, portrait_box):
+        suspect = path == str(visa)
+        return [], _stub_regions(suspect)
+    monkeypatch.setattr(pipeline.fieldforensics, "run", fake_ff)
+
+    r = pipeline.screen(ScreeningInput(claimed={"full_name": "A B"},
+                                       doc_path=str(doc), visa_path=str(visa)), dbfile)
+    assert r.evidence_source == "visa"
+    assert r.evidence_path is not None
+    assert len(list(evidence_dir.iterdir())) == 1
+
+
+def test_evidence_source_is_passport_all_green_when_neither_suspect(dbfile, tmp_path,
+                                                                     evidence_dir, monkeypatch):
+    doc = tmp_path / "doc.jpg"
+    visa = tmp_path / "visa.jpg"
+    Image.new("RGB", (64, 64), "white").save(doc, "JPEG")
+    Image.new("RGB", (64, 64), "white").save(visa, "JPEG")
+    monkeypatch.setattr(pipeline.fieldforensics, "run",
+                        lambda path, boxes, portrait_box: ([], _stub_regions(False)))
+
+    r = pipeline.screen(ScreeningInput(claimed={"full_name": "A B"},
+                                       doc_path=str(doc), visa_path=str(visa)), dbfile)
+    assert r.evidence_source == "passport"
+    assert len(list(evidence_dir.iterdir())) == 1
+
+
+def test_evidence_source_is_none_when_no_regions(dbfile):
+    r = pipeline.screen(ScreeningInput(claimed={"full_name": "A B"}), dbfile)
+    assert r.evidence_source is None
+    assert r.evidence_path is None
+
+
+def test_result_to_dict_includes_evidence_source(dbfile):
+    r = pipeline.screen(ScreeningInput(claimed={"full_name": "A B"}), dbfile)
+    assert "evidence_source" in r.to_dict()
 
 
 def test_engines_run_lists_every_invoked_engine_for_fields_only(dbfile):

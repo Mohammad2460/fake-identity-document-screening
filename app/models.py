@@ -30,6 +30,7 @@ class ScreeningResult:
     signals: list[Signal] = field(default_factory=list)
     engine_errors: list[str] = field(default_factory=list)
     evidence_path: str | None = None
+    evidence_source: str | None = None
     engines_run: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -39,6 +40,7 @@ class ScreeningResult:
             "band": self.band,
             "engine_errors": self.engine_errors,
             "evidence_path": self.evidence_path,
+            "evidence_source": self.evidence_source,
             "engines_run": self.engines_run,
             "signals": [
                 {"code": s.code, "engine": s.engine, "severity": s.severity,

@@ -52,7 +52,7 @@ To execute: use the `superpowers:subagent-driven-development` skill, one fresh s
 3. **No network on the request path.** No LLM API, no government API. Demo-day wifi must be irrelevant — we turn it off on stage deliberately. Models download once at setup.
 4. **Every engine degrades, never crashes.** An engine that raises becomes an `ENGINE_ERROR` signal, not a 500. A judge uploading a corrupt file still sees a verdict.
 5. **Every signal carries a human-readable `message`** naming what was checked and what was found. Explainability *is* the product — the PS and our pitch both say so.
-6. **No frontend build step.** Vanilla HTML + Tailwind CDN + plain JS. Nobody on the team knows React or JS; Claude writes all of it. Adding a bundler adds a way to lose.
+6. **No frontend build step.** Vanilla HTML + plain CSS + self-hosted IBM Plex fonts (no CDN) + plain JS. Nobody on the team knows React or JS; Claude writes all of it. Adding a bundler adds a way to lose.
 7. **TDD.** Test first → watch it fail → minimal implementation → watch it pass → commit.
 8. **Commit after every task.** The history is evidence of process.
 
@@ -94,7 +94,7 @@ Storage is three things, only one of them a database: sample images are **files 
 | OpenCV YuNet + SFace | `face_recognition` / dlib | No compiler, no cmake. ONNX, pip-only. |
 | ONNX Runtime | PyTorch | No time and no labelled data to train. We *run* pretrained neural nets; we don't train one. Defensible and honest. |
 | SQLite | MySQL | Zero config, one file, nothing to fail on demo day. "Swaps to MySQL in production" — one line. |
-| Vanilla + Tailwind CDN | React | Nobody knows React. No build step = no build failure at hour 30. |
+| Vanilla + plain CSS + self-hosted fonts, no CDN | React / Tailwind CDN | Nobody knows React. No build step = no build failure at hour 30. No CDN keeps the demo working with wifi off. |
 | Deterministic rules for adjudication | Black-box classifier | A fraud decision a border officer cannot explain is one they cannot use. |
 
 **Yes, we use AI.** RapidOCR, YuNet and SFace are neural networks. We run pretrained models via ONNX Runtime and do the *adjudication* with explainable rules. That is the design, not a shortcut.

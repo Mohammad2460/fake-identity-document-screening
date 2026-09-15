@@ -293,7 +293,7 @@ function renderResult(data, options = { moveFocus: true }) {
   const signals = Array.isArray(data.signals) ? data.signals : [];
 
   renderVerdict(data, signals);
-  renderExhibit(data.evidence_url, signals);
+  renderExhibit(data.evidence_url, data.evidence_source, signals);
   renderReasons(Array.isArray(data.top_reasons) ? data.top_reasons : [], signals);
   renderAllOutput(signals, Array.isArray(data.engine_errors) ? data.engine_errors : []);
 
@@ -339,7 +339,7 @@ function formatTimestamp(d) {
     + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
 }
 
-function renderExhibit(evidenceUrl, signals) {
+function renderExhibit(evidenceUrl, evidenceSource, signals) {
   const exhibit = $("exhibit");
   exhibit.replaceChildren();
   // Only ever load an evidence image the server names in its own format.
@@ -350,9 +350,12 @@ function renderExhibit(evidenceUrl, signals) {
     return;
   }
 
-  const altered = signals.filter((s) => ALTERED_CODES.includes(s.code));
-  const onVisa = altered.some((s) => String(s.message || "").startsWith("[visa]"));
+  // The exhibit image and its caption must describe the same document, so the
+  // label comes from the server's evidence_source, not from scanning messages.
+  const onVisa = evidenceSource === "visa";
   const docLabel = onVisa ? "VISA" : "PASSPORT";
+  const altered = signals.filter((s) => ALTERED_CODES.includes(s.code)
+    && (onVisa === String(s.message || "").startsWith("[visa]")));
   const countText = altered.length === 0
     ? "NO FIELD ALTERED"
     : altered.length + " " + plural(altered.length, "FIELD", "FIELDS") + " ALTERED";

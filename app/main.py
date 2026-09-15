@@ -1,6 +1,7 @@
 """HTTP surface for the screening system."""
 import os
 import re
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -33,6 +34,12 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Fake Identity & Document Screening System", lifespan=lifespan)
+
+# RapidOCR's thread-safety is unverified, so screenings are serialised - one at a
+# time - while api_screen itself runs in FastAPI's threadpool (it is a plain def,
+# not a coroutine) so other endpoints (/, static, /api/cases, /evidence) stay
+# responsive during a screening (checkpoint-3 ruling 3).
+_screen_lock = threading.Lock()
 
 
 @app.get("/health")
@@ -79,7 +86,7 @@ def _cleanup(*paths: str | None) -> None:
 
 
 @app.post("/api/screen")
-async def api_screen(
+def api_screen(
     document: UploadFile | None = File(default=None),
     visa: UploadFile | None = File(default=None),
     selfie: UploadFile | None = File(default=None),
@@ -91,6 +98,8 @@ async def api_screen(
     phone: str = Form(default=""),
     address: str = Form(default=""),
 ):
+    # Plain def: FastAPI runs this in its threadpool, so /, /static, /api/cases
+    # and /evidence stay responsive while a screening is in progress.
     doc_path = visa_path = selfie_path = None
     try:
         doc_path = _save_upload(document, "document")
@@ -105,23 +114,30 @@ async def api_screen(
             content={"error": f"{e.field} exceeds the 15 MB upload limit"},
         )
 
-    inp = ScreeningInput(
-        claimed={"full_name": full_name, "dob": dob, "passport_no": passport_no,
-                 "nationality": nationality, "email": email, "phone": phone,
-                 "address": address},
-        doc_path=doc_path,
-        visa_path=visa_path,
-        selfie_path=selfie_path,
-    )
-    result = screen(inp, config.DB_PATH)
-    body = result.to_dict()
-    body["top_reasons"] = [
-        {"code": s.code, "engine": s.engine, "severity": s.severity, "message": s.message}
-        for s in scoring.top_reasons(result.signals)
-    ]
-    body["evidence_url"] = (f"/evidence/{os.path.basename(result.evidence_path)}"
-                            if result.evidence_path else None)
-    return body
+    try:
+        inp = ScreeningInput(
+            claimed={"full_name": full_name, "dob": dob, "passport_no": passport_no,
+                     "nationality": nationality, "email": email, "phone": phone,
+                     "address": address},
+            doc_path=doc_path,
+            visa_path=visa_path,
+            selfie_path=selfie_path,
+        )
+        with _screen_lock:
+            result = screen(inp, config.DB_PATH)
+        body = result.to_dict()
+        body["top_reasons"] = [
+            {"code": s.code, "engine": s.engine, "severity": s.severity, "message": s.message}
+            for s in scoring.top_reasons(result.signals)
+        ]
+        body["evidence_url"] = (f"/evidence/{os.path.basename(result.evidence_path)}"
+                                if result.evidence_path else None)
+        return body
+    finally:
+        # Uploaded identity documents must not accumulate on disk (checkpoint-3
+        # ruling 4). The evidence image is a separate copy under EVIDENCE_DIR and
+        # is left alone.
+        _cleanup(doc_path, visa_path, selfie_path)
 
 
 @app.get("/api/cases")
