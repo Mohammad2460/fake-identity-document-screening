@@ -11,6 +11,8 @@ RECOGNIZER_PATH = "models/face_recognition_sface_2021dec.onnx"
 
 SAME_PERSON = 0.363     # OpenCV SFace documented cosine threshold
 DEFINITE_MISMATCH = 0.25
+GHOST_AREA_RATIO = 0.4  # a second face smaller than this fraction of the largest
+                        # is a printed "ghost" portrait, not a pasted-over photo
 
 # The detector/recognizer are cached singletons shared across requests; setInputSize+detect
 # (and alignCrop+feature) are not atomic, so concurrent calls with differently-sized images
@@ -43,6 +45,29 @@ def detect_faces(path: str) -> list[dict]:
     return [{"box": [int(v) for v in f[:4]], "confidence": float(f[-1]), "raw": f}
             for f in faces]
 
+def classify_portraits(faces: list[dict]) -> tuple[str, dict | None, list[dict]]:
+    """Classify a document's detected faces.
+
+    Returns (kind, primary, extras):
+    - "none": no faces.
+    - "single": exactly one face.
+    - "ghost": 2+ faces, every non-primary face's area is < GHOST_AREA_RATIO of
+      the largest — a primary portrait plus modern-passport ghost image(s).
+    - "multiple": 2+ faces where at least one other face is >= GHOST_AREA_RATIO
+      of the largest — consistent with a pasted-over portrait.
+    `primary` is the largest face (or None for "none"); `extras` are the rest.
+    """
+    if not faces:
+        return "none", None, []
+    ordered = sorted(faces, key=lambda f: f["box"][2] * f["box"][3], reverse=True)
+    primary, extras = ordered[0], ordered[1:]
+    if not extras:
+        return "single", primary, []
+    primary_area = primary["box"][2] * primary["box"][3]
+    if all((f["box"][2] * f["box"][3]) < GHOST_AREA_RATIO * primary_area for f in extras):
+        return "ghost", primary, extras
+    return "multiple", primary, extras
+
 def _embedding(path: str, face_row: np.ndarray) -> np.ndarray:
     img = _read(path)
     with _MODEL_LOCK:
@@ -71,24 +96,39 @@ def run(doc_path: str, selfie_path: str | None) -> list[Signal]:
 
     signals: list[Signal] = []
 
-    if not doc_faces:
+    kind, primary, extras = classify_portraits(doc_faces)
+    has_single_primary_portrait = False
+
+    if kind == "none":
         signals.append(Signal(
             code="FACE_NO_PORTRAIT_ON_DOC", engine="face", severity="medium",
             message="No portrait photograph was detected on the document. "
                     "Every genuine photo ID carries one.",
         ))
-    elif len(doc_faces) > 1:
+    elif kind == "multiple":
         signals.append(Signal(
             code="FACE_MULTIPLE_PORTRAITS", engine="face", severity="high",
             message=f"{len(doc_faces)} faces detected on a single ID document — "
                     f"consistent with a photo pasted over the original portrait.",
             evidence={"count": len(doc_faces)},
         ))
-    else:
+    elif kind == "ghost":
+        signals.append(Signal(
+            code="FACE_GHOST_IMAGE_PRESENT", engine="face", severity="info",
+            message="Primary portrait plus smaller ghost image(s), as printed on "
+                    "modern passports.",
+            evidence={"count": len(doc_faces)},
+        ))
+        has_single_primary_portrait = True
+    else:  # "single"
         signals.append(Signal(code="FACE_PORTRAIT_PRESENT", engine="face", severity="info",
                               message="A single portrait was detected on the document.",
                               evidence={"box": doc_faces[0]["box"],
                                         "confidence": round(doc_faces[0]["confidence"], 3)}))
+        has_single_primary_portrait = True
+
+    if not has_single_primary_portrait:
+        return signals
 
     if not selfie_path or not os.path.exists(selfie_path):
         return signals
