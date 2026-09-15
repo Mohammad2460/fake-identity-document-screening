@@ -26,5 +26,6 @@ def draw_evidence(path: str, regions: list[dict], out_dir: str) -> str | None:
                         0.6, (255, 255, 255), 2, cv2.LINE_AA)
 
     dest = os.path.join(out_dir, f"{uuid.uuid4().hex}.jpg")
-    cv2.imwrite(dest, img)
+    if not cv2.imwrite(dest, img):
+        return None
     return dest
