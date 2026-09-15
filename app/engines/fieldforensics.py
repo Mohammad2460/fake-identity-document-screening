@@ -98,7 +98,7 @@ def run(path: str, ocr_boxes: list[dict],
         if w * h >= MIN_AREA:
             regions.append({"box": (x, y, w, h), "label": label,
                             "kind": "text", "suspect": False, "score": 0.0})
-    if portrait_box:
+    if portrait_box and portrait_box[2] * portrait_box[3] >= MIN_AREA:
         regions.append({"box": tuple(portrait_box), "label": "PHOTOGRAPH",
                         "kind": "portrait", "suspect": False, "score": 0.0})
 

@@ -177,3 +177,9 @@ def test_run_does_not_add_stamp_overlapping_text_box(tmp_path):
     assert ff.stamp_regions(str(p)), "fixture must yield a stamp candidate"
     _, regions = ff.run(str(p), ocr_boxes)
     assert regions and not [r for r in regions if r["kind"] == "stamp"]
+
+def test_zero_area_portrait_box_is_ignored(doc_with_tampered_field):
+    path, boxes, _ = doc_with_tampered_field
+    ocr_boxes = [{"text": f"F{i}", "confidence": 0.9, "box": b} for i, b in enumerate(boxes)]
+    _, regions = ff.run(path, ocr_boxes, portrait_box=(0, 0, 0, 0))
+    assert not [r for r in regions if r["kind"] == "portrait"]
