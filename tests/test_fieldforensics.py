@@ -183,3 +183,8 @@ def test_zero_area_portrait_box_is_ignored(doc_with_tampered_field):
     ocr_boxes = [{"text": f"F{i}", "confidence": 0.9, "box": b} for i, b in enumerate(boxes)]
     _, regions = ff.run(path, ocr_boxes, portrait_box=(0, 0, 0, 0))
     assert not [r for r in regions if r["kind"] == "portrait"]
+
+def test_background_is_measured_around_the_field_not_inside_it(doc_with_tampered_field):
+    path, boxes, bad_idx = doc_with_tampered_field
+    gray = np.asarray(Image.open(path).convert("L"))
+    assert ff.background_luminance(gray, boxes[bad_idx]) >= 200

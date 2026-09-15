@@ -9,7 +9,8 @@ from app.models import Signal
 Z_THRESHOLD = 3.5      # modified z-score above which a field is an outlier
 MIN_REGIONS = 3        # fewer than this and "outlier" is meaningless
 MIN_AREA = 200         # ignore specks
-BACKGROUND_SPLIT = 128 # median box luminance below this = light-on-dark element
+BACKGROUND_SPLIT = 128 # median background luminance below this = light-on-dark element
+BACKGROUND_RING = 8    # pixels around a box sampled as its background
 BANNER_WIDTH_FRACTION = 0.8   # colour blobs this wide are banners, not stamps
 STAMP_OVERLAP_MAX = 0.5       # stamp candidates overlapping a printed region more are dropped
 
@@ -36,17 +37,31 @@ def region_scores(ela: np.ndarray, boxes: list[tuple]) -> list[float]:
         out.append(float(patch.mean()) if patch.size else 0.0)
     return out
 
+def background_luminance(gray: np.ndarray, box: tuple) -> float:
+    """Median luminance of a BACKGROUND_RING-pixel ring around the box, excluding
+    the box itself - so an edit inside the field cannot change its own grouping.
+    Falls back to the median inside the box when the ring is empty."""
+    h, w = gray.shape[:2]
+    x, y, bw, bh = box
+    x0, y0, x1, y1 = _clamp((x - BACKGROUND_RING, y - BACKGROUND_RING,
+                             bw + 2 * BACKGROUND_RING, bh + 2 * BACKGROUND_RING), w, h)
+    window = gray[y0:y1, x0:x1]
+    if not window.size:
+        return 255.0
+    mask = np.ones(window.shape[:2], bool)
+    bx0, by0, bx1, by1 = _clamp(box, w, h)
+    mask[max(0, by0 - y0):max(0, by1 - y0), max(0, bx0 - x0):max(0, bx1 - x0)] = False
+    ring = window[mask]
+    if ring.size:
+        return float(np.median(ring))
+    inside = gray[by0:by1, bx0:bx1]
+    return float(np.median(inside)) if inside.size else 255.0
+
 def region_backgrounds(path: str, boxes: list[tuple]) -> list[float]:
-    """Median grayscale luminance inside each box (clamped like region_scores)."""
+    """Background luminance around each box (see background_luminance)."""
     with Image.open(path) as im:
         gray = np.asarray(im.convert("L"))
-    h, w = gray.shape[:2]
-    out: list[float] = []
-    for box in boxes:
-        x0, y0, x1, y1 = _clamp(box, w, h)
-        patch = gray[y0:y1, x0:x1]
-        out.append(float(np.median(patch)) if patch.size else 255.0)
-    return out
+    return [background_luminance(gray, box) for box in boxes]
 
 def outlier_indices(values: list[float], z_threshold: float = Z_THRESHOLD) -> list[int]:
     if len(values) < MIN_REGIONS:
