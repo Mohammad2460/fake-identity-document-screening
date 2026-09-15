@@ -101,7 +101,7 @@ A judge uses it without you touching the keyboard.
 | T12 | Cross-document consistency · *stretch, cut first* | ✅ |
 | T13 | Pipeline orchestrator with per-engine fault isolation | ✅ |
 | T14 | API — `/api/screen`, `/api/cases` | ✅ |
-| T15 | Frontend — verdict, reason cards, **annotated evidence image** | 🟡 built + works in real browser; review found 4 fixes (wrong on-screen counts, XSS test, image URL check) — fix round next |
+| T15 | Frontend — verdict, reason cards, **annotated evidence image** | ✅ reviewed, browser-verified, pushed (checkpoint 3) |
 
 **Gate — by hand in a browser:**
 - [ ] Clean passport → green CLEAR
@@ -212,6 +212,7 @@ Append one line per completed task: `hh:mm — T<n> done — note`
 2026-09-15 — Added `docs/TEAM_GUIDE.md`: plain-language roles for teammates who don't use Claude.
 2026-09-15 — Session 2: T9 OCR ✅, T10 field-level forensics (red box) ✅, T11 face ✅. 103/103 tests. Visual check found & fixed header false positive in T10. Found T8 false-alarms on genuine passports (blocking before T16).
 2026-09-15 — T12 cross-doc ✅, T13 pipeline ✅, T14 API ✅, T15 website built (offline fonts, no CDN, XSS-safe) and verified in a real browser; T15 fix round pending. 176 tests. NEXT: T15 fix round → checkpoint 3 review → push.
+2026-09-15 — T15 fix round ✅ (true check/finding counts, XSS guard, evidence URL check). Checkpoint 3 code review fixed 4 bugs: genuine passport+visa falsely REJECTED (visa number compared as passport number), visa evidence overwrote passport evidence, server froze during a screening, uploads never deleted. 202 tests. Pushed T12-T15. NEXT: T16 — T16.4 tamper false alarms FIRST (blocking), then samples/faces/watchlist rename/calibration.
 2026-09-15 — Checkpoint 2 code review: 8 bugs fixed (worst: "Anna Smith" accepted on Anna Maria Eriksson's passport; one-digit-changed passport number passed; genuine DOBs flagged; sideways phone photos misplaced red boxes). 119/119 tests. Pushed.
 ```
 
