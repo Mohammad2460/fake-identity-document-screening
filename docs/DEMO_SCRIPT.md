@@ -154,9 +154,13 @@ and `--out data/demo_someone` to build a second person's set alongside the first
 document: `genuine` for every file, except `dob_altered` and `name_altered`,
 which carry the forged value — an officer types what the document shows them.
 
-**Screen the genuine pair first.** Five screenings inside ten minutes trip the
-velocity engine's bulk-submission rule, which would add an unrelated finding to
-every later case. Delete `cases.db` between rehearsals.
+**Order matters**, because the case database remembers. Screen the genuine pair
+**first** and the name forgery **last**: the name forgery presents the same
+passport number under a different name, so from then on every case carries a
+critical "same document, new name" finding that has nothing to do with the
+document on screen. Five screenings inside ten minutes also trip the
+bulk-submission rule. Deleting `cases.db` clears both — do it after every
+rehearsal.
 
 `data/demo/` and `data/demo_*/` are gitignored. Delete them and the source
 photos after the hackathon.

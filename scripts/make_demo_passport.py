@@ -317,7 +317,7 @@ def main(argv: list[str] | None = None) -> dict:
         print("  " + written[key] + "   (" + note + ")")
     print("  " + os.path.join(args.out, "demo_claimed.json")
           + "   (what to type into the form)")
-    print("\nType these details for every file except the DOB forgery:")
+    print("\nType these details for every file except the DOB and name forgeries:")
     for k, v in written["claimed"].items():
         print(f"    {k}: {v}")
     print("  For " + os.path.basename(written["dob_altered"])
@@ -328,9 +328,14 @@ def main(argv: list[str] | None = None) -> dict:
     print("\nOn stage: upload the genuine passport and visa, type the details "
           'above, press "Use camera", capture the live selfie, and screen. Then '
           "re-run with each forged file to show what was altered, boxed red.")
-    print("Screen the genuine pair FIRST: five screenings inside ten minutes trip "
-          "the velocity engine's bulk-submission rule, which would add an unrelated "
-          "finding to every later case. Between rehearsals, delete cases.db.")
+    print("Two ordering rules, both about the case history rather than the "
+          "documents:")
+    print("  - screen the name forgery LAST. It presents this passport number "
+          "under a different name, so from then on every case carries a "
+          "critical 'same document, new name' finding.")
+    print("  - five screenings inside ten minutes trip the bulk-submission "
+          "rule, which adds an unrelated finding to every later case.")
+    print("  Deleting cases.db clears both. Do it after every rehearsal.")
     print("\nDelete " + args.out + " and the source photo after the hackathon.")
     return written
 

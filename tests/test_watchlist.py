@@ -98,3 +98,26 @@ def test_clean_case_with_extra_names_single_info_signal():
                      "visa MRZ": "Jonathan Michael Brewster"},
     )
     assert [s.code for s in signals] == ["WL_NO_MATCH"]
+
+
+def test_a_local_overlay_file_adds_entries_without_touching_the_committed_list(tmp_path):
+    """data/watchlist.local.csv is gitignored, so a name that must not be
+    committed - a teammate standing in for a wanted traveller on stage - lives
+    there instead of in the list everyone pulls."""
+    shared = tmp_path / "watchlist.csv"
+    shared.write_text("name,list,country,reason\n"
+                      "Viktor Anatolyevich Petrov,SDN,RU,Financial sanctions\n")
+    (tmp_path / "watchlist.local.csv").write_text(
+        "name,list,country,reason\nLocal Only Person,SDN,IN,Financial sanctions\n")
+    watchlist.load_watchlist.cache_clear()
+    sigs = watchlist.run({"full_name": "Local Only Person"}, str(shared))
+    assert [s.code for s in sigs] == ["WL_MATCH"]
+
+
+def test_a_missing_local_overlay_is_not_an_error(tmp_path):
+    shared = tmp_path / "watchlist.csv"
+    shared.write_text("name,list,country,reason\n"
+                      "Viktor Anatolyevich Petrov,SDN,RU,Financial sanctions\n")
+    watchlist.load_watchlist.cache_clear()
+    sigs = watchlist.run({"full_name": "Viktor Anatolyevich Petrov"}, str(shared))
+    assert [s.code for s in sigs] == ["WL_MATCH"]

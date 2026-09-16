@@ -7,6 +7,7 @@ something else at intake (task-20).
 """
 import csv
 import functools
+import os
 import rapidfuzz
 from rapidfuzz import fuzz, process
 from app.models import Signal
@@ -14,10 +15,30 @@ from app.models import Signal
 MATCH_THRESHOLD = 88
 REVIEW_THRESHOLD = 78
 
+def _read(path: str) -> list[dict]:
+    with open(path, newline="", encoding="utf-8") as fh:
+        return [dict(row) for row in csv.DictReader(fh)]
+
+
+def local_overlay_path(path: str) -> str:
+    """watchlist.csv -> watchlist.local.csv, alongside it."""
+    base, ext = os.path.splitext(path)
+    return base + ".local" + ext
+
+
 @functools.lru_cache(maxsize=4)
 def load_watchlist(path: str = "data/watchlist.csv") -> tuple:
-    with open(path, newline="", encoding="utf-8") as fh:
-        return tuple(dict(row) for row in csv.DictReader(fh))
+    """The committed list, plus an optional gitignored overlay beside it.
+
+    The overlay exists so a name that must never be committed - a consenting
+    teammate standing in for a wanted traveller during the demo - can be
+    screened without shipping a real person as a sanctioned individual.
+    """
+    entries = _read(path)
+    overlay = local_overlay_path(path)
+    if os.path.exists(overlay):
+        entries += _read(overlay)
+    return tuple(entries)
 
 
 def _normalise(name: str) -> str:
