@@ -159,6 +159,177 @@ function setupDropzone(wrapper) {
 document.querySelectorAll("[data-file-field]").forEach(setupDropzone);
 
 // ---------------------------------------------------------------------------
+// 3b. Live selfie capture
+//
+// A camera control is added beside the selfie drop zone ONLY when the browser
+// exposes getUserMedia (needs a secure context: localhost counts, a plain
+// LAN IP address does not). Where it is missing there is no button at all and
+// file upload is the only path — never a control that cannot work.
+//
+// The captured frame is put into the existing selfie file input via a
+// DataTransfer, so submitting is completely unchanged. Nothing is uploaded
+// until the officer presses "Screen traveller".
+//
+// The camera stream MUST be stopped on every exit path. Each one is tagged
+// `// teardown(<name>)` and a test asserts the stop call is there.
+// ---------------------------------------------------------------------------
+
+const CAMERA_ERRORS = {
+  NotAllowedError: "Camera permission was refused. Allow camera access in the browser, or choose a photo file instead.",
+  NotFoundError: "No camera was found on this device. Choose a photo file instead.",
+  NotReadableError: "The camera is already in use by another app. Close it and try again, or choose a photo file instead.",
+  OverconstrainedError: "This camera cannot provide a usable picture. Choose a photo file instead.",
+  SecurityError: "The browser blocks the camera on this address. Open the page on this laptop at localhost, or choose a photo file instead.",
+};
+const CAMERA_ERROR_FALLBACK = "The camera could not be started. Choose a photo file instead.";
+
+let cameraStream = null;
+
+/** The one place a stream is released. Safe to call when nothing is running. */
+function stopCameraStream() {
+  if (!cameraStream) return;
+  cameraStream.getTracks().forEach((track) => track.stop());
+  cameraStream = null;
+}
+
+function setupSelfieCamera() {
+  const wrapper = document.querySelector('[data-file-field="selfie"]');
+  if (!wrapper) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+
+  const input = wrapper.querySelector('input[type="file"]');
+  const removeBtn = wrapper.querySelector(".remove-btn");
+
+  const openBtn = el("button", { type: "button", class: "btn-secondary camera-btn",
+                                 text: "Use camera" });
+  const status = el("p", { class: "camera-status t-label", role: "status",
+                           "aria-live": "polite" });
+  const video = el("video", { class: "camera-video", playsinline: "", muted: "",
+                              autoplay: "", "aria-label": "Live camera preview" });
+  video.muted = true;
+  const canvas = el("canvas", { class: "camera-still", role: "img",
+                                "aria-label": "Captured selfie" });
+  canvas.hidden = true;
+  const captureBtn = el("button", { type: "button", class: "btn-primary camera-capture",
+                                    text: "Capture" });
+  const cancelBtn = el("button", { type: "button", class: "remove-btn camera-cancel",
+                                   text: "Cancel" });
+  const retakeBtn = el("button", { type: "button", class: "btn-secondary camera-retake",
+                                   text: "Retake" });
+  retakeBtn.hidden = true;
+  const actions = el("div", { class: "camera-actions" }, [captureBtn, retakeBtn, cancelBtn]);
+  const stage = el("div", { class: "camera-stage" }, [video, canvas, actions]);
+  stage.hidden = true;
+
+  const block = el("div", { class: "camera" }, [
+    openBtn,
+    stage,
+    el("p", { class: "camera-note t-label",
+              text: "The camera runs on this device. Nothing is sent until you screen the traveller." }),
+  ]);
+  wrapper.insertBefore(block, $("e-selfie"));
+
+  function closeStage() {
+    stage.hidden = true;
+    openBtn.hidden = false;
+    video.hidden = false;
+    canvas.hidden = true;
+    captureBtn.hidden = false;
+    retakeBtn.hidden = true;
+    video.srcObject = null;
+  }
+
+  async function openCamera() {
+    setFieldError("selfie", "");
+    stopCameraStream();   // never hold two streams at once
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 } },
+        audio: false,
+      });
+    } catch (err) {
+      // teardown(error): getUserMedia may have half-opened a device.
+      stopCameraStream();
+      closeStage();
+      status.textContent = "";
+      setFieldError("selfie", CAMERA_ERRORS[err && err.name] || CAMERA_ERROR_FALLBACK);
+      openBtn.focus();
+      return;
+    }
+    video.srcObject = cameraStream;
+    const playing = video.play();
+    if (playing && typeof playing.catch === "function") playing.catch(() => {});
+    openBtn.hidden = true;
+    stage.hidden = false;
+    video.hidden = false;
+    canvas.hidden = true;
+    captureBtn.hidden = false;
+    retakeBtn.hidden = true;
+    status.textContent = "Camera on. Press Capture when the face is centred.";
+    captureBtn.focus();
+  }
+
+  function capture() {
+    const width = video.videoWidth || 640;
+    const height = video.videoHeight || 480;
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d").drawImage(video, 0, 0, width, height);
+    // teardown(capture): the still is on the canvas; the camera is done.
+    stopCameraStream();
+    video.srcObject = null;
+    video.hidden = true;
+    canvas.hidden = false;
+    captureBtn.hidden = true;
+    retakeBtn.hidden = false;
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        setFieldError("selfie", CAMERA_ERROR_FALLBACK);
+        return;
+      }
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([blob], "selfie.jpg", { type: "image/jpeg" }));
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      status.textContent = "Selfie captured. Retake it, or screen the traveller.";
+    }, "image/jpeg", 0.92);
+    retakeBtn.focus();
+  }
+
+  openBtn.addEventListener("click", openCamera);
+  captureBtn.addEventListener("click", capture);
+  retakeBtn.addEventListener("click", openCamera);
+
+  cancelBtn.addEventListener("click", () => {
+    // teardown(cancel): the officer backed out of the preview.
+    stopCameraStream();
+    closeStage();
+    status.textContent = "Camera off.";
+    openBtn.focus();
+  });
+
+  if (removeBtn) {
+    removeBtn.addEventListener("click", () => {
+      // teardown(remove): the selfie was removed, so the camera closes too.
+      stopCameraStream();
+      closeStage();
+      status.textContent = "";
+    });
+  }
+
+  // teardown(pagehide): tab closed, navigated away or backgrounded.
+  window.addEventListener("pagehide", () => stopCameraStream());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      stopCameraStream();
+      closeStage();
+    }
+  });
+}
+
+setupSelfieCamera();
+
+// ---------------------------------------------------------------------------
 // 4. Submitting
 // ---------------------------------------------------------------------------
 

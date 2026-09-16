@@ -429,3 +429,37 @@ input[type="text"]:focus-visible, input[type="tel"]:focus-visible, input[type="e
   .verdict.is-loading::before { animation: none; transform: none; }
   .verdict.is-result { animation: none; }
 }
+
+/* ---------- Live selfie capture (built by app.js only where getUserMedia exists) ---------- */
+.camera { margin-top: var(--s-3); }
+.camera .camera-btn { margin-top: 0; min-height: 44px; padding: 0 var(--s-4); font-size: 16px; }
+.camera-note { color: var(--ink-3); margin-top: var(--s-2); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.camera-status { color: var(--ink-2); margin-top: var(--s-2); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.camera-status:empty { display: none; }
+
+.camera-stage {
+  margin-top: var(--s-3);
+  padding: var(--s-3);
+  background: var(--surface-sunk);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.camera-video, .camera-still {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: var(--ink);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+}
+.camera-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+}
+.camera-actions .btn-primary { width: auto; height: 48px; margin-top: 0; padding: 0 var(--s-6); }
+.camera-actions .btn-secondary { margin-top: 0; }
