@@ -2,8 +2,8 @@
 import os
 import uuid
 from app import annotate, config, db, scoring
-from app.engines import (crossdoc, face, fieldforensics, identity, metadata, mrz,
-                         ocr, tamper, velocity, watchlist)
+from app.engines import (crossdoc, face, fieldforensics, identity, liveness,
+                         metadata, mrz, ocr, tamper, velocity, watchlist)
 from app.models import ScreeningInput, ScreeningResult, Signal
 
 
@@ -127,6 +127,11 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
                                  ("full_name", "dob", "passport_no", "nationality")}},
     ) if src]
     collect("crossdoc", crossdoc.run, sources)
+
+    # 4b. Liveness: only when the officer actually ran the camera challenge.
+    # No frames means no signal at all, so file uploads are wholly unaffected.
+    if inp.selfie_frames:
+        collect("liveness", liveness.run, inp.selfie_frames, inp.liveness_direction)
 
     # 5. Pixel forensics on the passport image.
     doc_regions: list | None = None

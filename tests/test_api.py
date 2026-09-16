@@ -224,3 +224,71 @@ def test_evidence_still_served_after_upload_cleanup(client):
     evidence_url = r.json()["evidence_url"]
     if evidence_url:
         assert client.get(evidence_url).status_code == 200
+
+
+# --- T16e: liveness challenge frames ---------------------------------------
+
+def _jpeg(size=(64, 64)):
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", size, "white").save(buf, "JPEG")
+    buf.seek(0)
+    return buf
+
+
+def test_screen_accepts_repeated_selfie_frames(client):
+    files = [("selfie_frames", (f"f{i}.jpg", _jpeg(), "image/jpeg")) for i in range(5)]
+    r = client.post("/api/screen",
+                    data={"full_name": "Jonathan Brewster", "liveness_direction": "left"},
+                    files=files)
+    assert r.status_code == 200
+    from app import config
+    assert os.listdir(config.UPLOAD_DIR) == []
+
+
+def test_selfie_frames_are_size_capped_like_every_other_upload(client, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "MAX_UPLOAD_BYTES", 1024)
+    files = [("selfie_frames", ("f0.jpg", io.BytesIO(b"x" * 4096), "image/jpeg"))]
+    r = client.post("/api/screen", data={"full_name": "Big Frame"}, files=files)
+    assert r.status_code == 413
+    assert os.listdir(config.UPLOAD_DIR) == []
+
+
+def test_too_many_frames_are_ignored_not_saved(client):
+    from app import config
+    files = [("selfie_frames", (f"f{i}.jpg", _jpeg(), "image/jpeg"))
+             for i in range(config.MAX_LIVENESS_FRAMES + 8)]
+    r = client.post("/api/screen", data={"full_name": "Flood"}, files=files)
+    assert r.status_code == 200
+    assert os.listdir(config.UPLOAD_DIR) == []
+
+
+def test_frames_reach_the_pipeline_and_are_deleted_afterwards(client, monkeypatch):
+    from app import config, main
+    seen = {}
+    real_screen = main.screen
+
+    def spying_screen(inp, db_path):
+        seen["frames"] = list(inp.selfie_frames)
+        seen["direction"] = inp.liveness_direction
+        seen["existed"] = [os.path.exists(p) for p in inp.selfie_frames]
+        return real_screen(inp, db_path)
+    monkeypatch.setattr(main, "screen", spying_screen)
+
+    files = [("selfie_frames", (f"f{i}.jpg", _jpeg(), "image/jpeg")) for i in range(4)]
+    r = client.post("/api/screen",
+                    data={"full_name": "Frames Reach", "liveness_direction": "right"},
+                    files=files)
+    assert r.status_code == 200
+    assert len(seen["frames"]) == 4
+    assert all(seen["existed"])
+    assert seen["direction"] == "right"
+    assert not any(os.path.exists(p) for p in seen["frames"])
+    assert os.listdir(config.UPLOAD_DIR) == []
+
+
+def test_no_frames_means_no_liveness_signal_over_http(client):
+    r = client.post("/api/screen", data={"full_name": "Plain Upload"})
+    codes = [s["code"] for s in r.json()["signals"]]
+    assert not [c for c in codes if c.startswith("LIVENESS_")]

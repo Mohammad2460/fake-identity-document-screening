@@ -90,6 +90,8 @@ def api_screen(
     document: UploadFile | None = File(default=None),
     visa: UploadFile | None = File(default=None),
     selfie: UploadFile | None = File(default=None),
+    selfie_frames: list[UploadFile] = File(default=[]),
+    liveness_direction: str = Form(default="left"),
     full_name: str = Form(default=""),
     dob: str = Form(default=""),
     passport_no: str = Form(default=""),
@@ -101,14 +103,21 @@ def api_screen(
     # Plain def: FastAPI runs this in its threadpool, so /, /static, /api/cases
     # and /evidence stay responsive while a screening is in progress.
     doc_path = visa_path = selfie_path = None
+    frame_paths: list[str] = []
     try:
         doc_path = _save_upload(document, "document")
         visa_path = _save_upload(visa, "visa")
         selfie_path = _save_upload(selfie, "selfie")
+        # Liveness challenge frames. Anything past the cap is dropped unread, so
+        # a scripted flood cannot hold the screening lock open.
+        for frame in (selfie_frames or [])[:config.MAX_LIVENESS_FRAMES]:
+            saved = _save_upload(frame, "selfie_frames")
+            if saved:
+                frame_paths.append(saved)
     except UploadTooLarge as e:
         # The failed field's own partial file is already removed by _save_upload;
         # clean up anything saved earlier in this same request.
-        _cleanup(doc_path, visa_path, selfie_path)
+        _cleanup(doc_path, visa_path, selfie_path, *frame_paths)
         return JSONResponse(
             status_code=413,
             content={"error": f"{e.field} exceeds the 15 MB upload limit"},
@@ -122,6 +131,8 @@ def api_screen(
             doc_path=doc_path,
             visa_path=visa_path,
             selfie_path=selfie_path,
+            selfie_frames=frame_paths,
+            liveness_direction=liveness_direction,
         )
         with _screen_lock:
             result = screen(inp, config.DB_PATH)
@@ -137,7 +148,7 @@ def api_screen(
         # Uploaded identity documents must not accumulate on disk (checkpoint-3
         # ruling 4). The evidence image is a separate copy under EVIDENCE_DIR and
         # is left alone.
-        _cleanup(doc_path, visa_path, selfie_path)
+        _cleanup(doc_path, visa_path, selfie_path, *frame_paths)
 
 
 @app.get("/api/cases")

@@ -336,3 +336,75 @@ def test_engines_run_lists_every_invoked_engine_for_fields_only(dbfile):
         assert name not in r.engines_run
     assert len(r.engines_run) == len(set(r.engines_run))
     assert r.to_dict()["engines_run"] == r.engines_run
+
+
+# --- T16e: liveness challenge frames -------------------------------------
+
+def _models_present():
+    return os.path.exists("models/face_detection_yunet_2023mar.onnx")
+
+
+needs_face_models = pytest.mark.skipif(
+    not _models_present(), reason="face models not downloaded")
+needs_face_data = pytest.mark.skipif(
+    not os.path.exists("data/faces/sfhq_00.jpg"), reason="data/faces crops not present")
+
+
+def test_no_liveness_signal_when_no_frames_are_submitted(dbfile):
+    """An officer uploading files, or a judge screening their own document,
+    must never see a liveness signal."""
+    result = pipeline.screen(ScreeningInput(claimed={"full_name": "A B"}), dbfile)
+    assert not [s for s in result.signals if s.code.startswith("LIVENESS_")]
+
+
+@needs_face_models
+@needs_face_data
+def test_a_photograph_sequence_moves_a_clean_case_to_review(dbfile, tmp_path):
+    from scripts.tune_liveness import photo_sequence
+
+    clean = {"full_name": "Jonathan Michael Brewster", "dob": "1988-03-14",
+             "passport_no": "L898902C3", "nationality": "UTO",
+             "email": "jonathan.brewster@gmail.com", "phone": "9845012763"}
+    baseline = pipeline.screen(ScreeningInput(claimed=clean), dbfile)
+    assert baseline.band == "CLEAR"
+
+    frames = photo_sequence("data/faces/sfhq_00.jpg", str(tmp_path), "s")
+    result = pipeline.screen(ScreeningInput(claimed=clean, selfie_frames=frames), dbfile)
+
+    failed = [s for s in result.signals if s.code == "LIVENESS_FAILED"]
+    assert failed and failed[0].severity == "medium"
+    assert result.band == "REVIEW"
+    assert "liveness" in result.engines_run
+
+
+@needs_face_models
+@needs_face_data
+def test_a_failed_liveness_challenge_alone_never_rejects(dbfile, tmp_path):
+    from scripts.tune_liveness import photo_sequence
+    frames = photo_sequence("data/faces/sfhq_00.jpg", str(tmp_path), "s")
+    result = pipeline.screen(ScreeningInput(selfie_frames=frames), dbfile)
+    assert result.band != "REJECT"
+    assert result.score < 65
+
+
+@needs_face_models
+@needs_face_data
+def test_a_turning_head_adds_no_risk(dbfile, tmp_path):
+    from scripts.tune_liveness import live_sequence
+    frames = live_sequence("data/faces/sfhq_00.jpg", str(tmp_path), "l")
+    result = pipeline.screen(ScreeningInput(selfie_frames=frames), dbfile)
+    assert "LIVENESS_PASS" in [s.code for s in result.signals]
+    assert result.band == "CLEAR"
+
+
+def test_liveness_engine_failure_is_isolated(dbfile, monkeypatch, tmp_path):
+    frame = tmp_path / "f.png"
+    Image.new("RGB", (64, 64), "white").save(frame)
+
+    def boom(*a, **k):
+        raise RuntimeError("liveness exploded")
+    monkeypatch.setattr(pipeline.liveness, "run", boom)
+    result = pipeline.screen(
+        ScreeningInput(selfie_frames=[str(frame)]), dbfile)
+    assert any("liveness" in e for e in result.engine_errors)
+    assert isinstance(result.score, int)

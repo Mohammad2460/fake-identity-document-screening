@@ -18,6 +18,7 @@ ENGINE_WEIGHTS = {
     "ocr": 0.9,
     "face": 1.0,
     "crossdoc": 1.0,
+    "liveness": 1.0,
 }
 
 BANDS = [(30, "CLEAR"), (65, "REVIEW"), (101, "REJECT")]
@@ -27,3 +28,6 @@ UPLOAD_DIR = "data/uploads"
 EVIDENCE_DIR = "data/evidence"
 DB_PATH = "cases.db"
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+# Challenge frames per screening. The client sends ~8; anything past this
+# is dropped unread so a scripted flood cannot stall the screening lock.
+MAX_LIVENESS_FRAMES = 12

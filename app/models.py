@@ -21,6 +21,10 @@ class ScreeningInput:
     doc_path: str | None = None
     visa_path: str | None = None
     selfie_path: str | None = None
+    # Liveness challenge: the frames captured while the traveller was asked
+    # to turn their head, and the direction they were asked to turn.
+    selfie_frames: list[str] = field(default_factory=list)
+    liveness_direction: str = "left"
 
 @dataclass
 class ScreeningResult:
