@@ -1,4 +1,5 @@
 import io
+import shutil
 import os
 import re
 import pytest
@@ -335,3 +336,13 @@ def test_no_frames_means_no_liveness_signal_over_http(client):
     r = client.post("/api/screen", data={"full_name": "Plain Upload"})
     codes = [s["code"] for s in r.json()["signals"]]
     assert not [c for c in codes if c.startswith("LIVENESS_")]
+
+
+def test_upload_succeeds_after_the_upload_dir_is_deleted(client, tmp_path):
+    """A demo-day cleanup (rm -rf data/uploads) between startup and a request must
+    not 500 every screening - the directory is recreated on demand."""
+    from app import config
+    shutil.rmtree(config.UPLOAD_DIR, ignore_errors=True)
+    r = client.post("/api/screen", files={"document": ("d.jpg", _jpeg(), "image/jpeg")},
+                    data={"full_name": "A B"})
+    assert r.status_code == 200, r.text

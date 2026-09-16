@@ -72,6 +72,9 @@ def _save_upload(upload: UploadFile | None, field: str, limit: int = None,
         return None
     limit = config.MAX_UPLOAD_BYTES if limit is None else limit
     ext = _safe_ext(upload.filename)
+    # The directory can vanish between startup and a request (a cleanup step
+    # before a demo, a cleared temp dir); recreate it rather than 500.
+    os.makedirs(config.UPLOAD_DIR, exist_ok=True)
     dest = os.path.join(config.UPLOAD_DIR, f"{uuid.uuid4().hex}{ext}")
     total = 0
     with open(dest, "wb") as fh:
