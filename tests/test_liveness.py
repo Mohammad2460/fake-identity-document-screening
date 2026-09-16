@@ -51,21 +51,42 @@ def test_two_frames_are_inconclusive(blank):
     signals = liveness.run([blank, blank])
     assert codes(signals) == ["LIVENESS_INCONCLUSIVE"]
     assert signals[0].severity == "low"
+    # checkpoint-4 R2: n_total (2) < MIN_FRAMES, so too little was even
+    # supplied to judge - no weight_override, unlike the case below.
+    assert signals[0].weight_override is None
 
 
 def test_frames_without_a_face_are_inconclusive(blank):
     signals = liveness.run([blank] * 6)
     assert codes(signals) == ["LIVENESS_INCONCLUSIVE"]
     assert signals[0].severity == "low"
+    # checkpoint-4 R2: 6 frames were supplied (>= MIN_FRAMES) and none could be
+    # judged - as suspicious as a clean FAILED, so it carries the same weight.
+    assert signals[0].weight_override == liveness.FAILED_SCORE
 
 
 @no_face_data
-def test_face_lost_mid_sequence_is_inconclusive(tmp_path, blank):
+def test_losing_one_of_several_frames_still_gets_judged(tmp_path, blank):
+    # checkpoint-4 R2: requiring EVERY frame usable let a spoofer downgrade a
+    # FAILED to an unscored INCONCLUSIVE by losing a single frame, and cost a
+    # genuine turn its extreme frames. Losing 1 of 7 (>=60% still usable) must
+    # still be judged as a normal pass, not waved through as inconclusive.
     from scripts.tune_liveness import live_sequence
     frames = live_sequence(FACE_A, str(tmp_path), "l")
-    frames[3] = blank        # the traveller stepped out of shot
+    frames[3] = blank        # the traveller briefly stepped out of shot
+    signals = liveness.run(frames)
+    assert codes(signals) == ["LIVENESS_PASS"]
+
+
+@no_face_data
+def test_losing_most_frames_is_inconclusive_with_failed_weight(tmp_path, blank):
+    from scripts.tune_liveness import live_sequence
+    frames = live_sequence(FACE_A, str(tmp_path), "l")
+    for i in (1, 2, 3, 4, 5):
+        frames[i] = blank     # only 2 of 7 frames usable, below the 60% floor
     signals = liveness.run(frames)
     assert codes(signals) == ["LIVENESS_INCONCLUSIVE"]
+    assert signals[0].weight_override == liveness.FAILED_SCORE
 
 
 def test_unreadable_frames_do_not_raise(tmp_path):
@@ -73,6 +94,7 @@ def test_unreadable_frames_do_not_raise(tmp_path):
     bad.write_bytes(b"not an image")
     signals = liveness.run([str(bad)] * 5)
     assert codes(signals) == ["LIVENESS_INCONCLUSIVE"]
+    assert signals[0].weight_override == liveness.FAILED_SCORE
 
 
 # --- the two verdicts ------------------------------------------------------

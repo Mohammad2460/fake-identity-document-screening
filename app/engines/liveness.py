@@ -26,6 +26,7 @@ Calibration section for the measured numbers.
 import math
 import os
 
+from app.config import MAX_LIVENESS_FRAMES
 from app.models import Signal
 
 # Calibrated in scripts/tune_liveness.py over synthetic sequences built from the
@@ -37,7 +38,8 @@ from app.models import Signal
 YAW_DELTA_THRESHOLD = 0.045
 
 MIN_FRAMES = 3     # fewer usable frames than this proves nothing
-MAX_FRAMES = 12    # a flood of frames must not stall a screening
+MAX_FRAMES = MAX_LIVENESS_FRAMES    # a flood of frames must not stall a screening
+MIN_USABLE_FRACTION = 0.6   # below this, too many frames were unreadable to judge fairly
 
 # A liveness failure must land a clean case in MANUAL REVIEW on its own, but must
 # never be enough for REJECT by itself. The severity stays "medium" (the cap this
@@ -104,12 +106,22 @@ def run(frame_paths: list[str] | None, direction: str = DEFAULT_DIRECTION) -> li
     usable = [m for m in measured if m]
     n_usable, n_total = len(usable), len(used)
 
-    if n_usable < MIN_FRAMES or n_usable < n_total:
+    # checkpoint-4 R2: requiring EVERY frame usable let a spoofer downgrade a
+    # FAILED (35) to an unscored INCONCLUSIVE just by losing one frame, and cost
+    # genuine head turns their extreme frames where the face partly left the
+    # camera. A face in most (>=60%) frames, with at least MIN_FRAMES usable,
+    # is now judged. When enough frames were even supplied to judge
+    # (n_total >= MIN_FRAMES) and it still can't be, that is as suspicious as a
+    # clean failure, so INCONCLUSIVE carries the same weight_override as FAILED.
+    if n_usable < MIN_FRAMES or n_usable < MIN_USABLE_FRACTION * n_total:
+        weight_override = FAILED_SCORE if n_total >= MIN_FRAMES else None
         return [Signal(
             code="LIVENESS_INCONCLUSIVE", engine="liveness", severity="low",
+            weight_override=weight_override,
             message=(f"The liveness challenge could not be judged: a face was "
                      f"found in only {n_usable} of {n_total} camera frames "
-                     f"(at least {MIN_FRAMES}, in every frame, are needed). "
+                     f"(at least {MIN_FRAMES}, and at least "
+                     f"{MIN_USABLE_FRACTION:.0%}, are needed). "
                      f"Ask the traveller to face the camera and repeat it."),
             evidence={"frames_used": n_total, "frames_with_face": n_usable})]
 
