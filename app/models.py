@@ -8,6 +8,7 @@ class Signal:
     engine: str
     severity: str
     message: str
+    plain: str = ""
     weight_override: float | None = None
     evidence: dict = field(default_factory=dict)
 
@@ -48,7 +49,7 @@ class ScreeningResult:
             "engines_run": self.engines_run,
             "signals": [
                 {"code": s.code, "engine": s.engine, "severity": s.severity,
-                 "message": s.message, "evidence": s.evidence}
+                 "message": s.message, "plain": s.plain, "evidence": s.evidence}
                 for s in self.signals
             ],
         }

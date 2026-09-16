@@ -113,17 +113,22 @@ def find_mrz_lines(lines: list[str]) -> list[str]:
 def run(path: str, claimed: dict) -> tuple[list[Signal], list[str], list[dict]]:
     if not path or not os.path.exists(path):
         return ([Signal(code="OCR_UNREADABLE", engine="ocr", severity="low",
-                        message="No document image available for text extraction.")], [], [])
+                        message="No document image available for text extraction.",
+                        plain="No document photo was available, so the printed "
+                              "text could not be checked.")], [], [])
     try:
         boxes = extract_boxes(path)
     except Exception as e:
         return ([Signal(code="OCR_UNREADABLE", engine="ocr", severity="low",
-                        message=f"OCR failed: {type(e).__name__}: {e}")], [], [])
+                        message=f"OCR failed: {type(e).__name__}: {e}",
+                        plain="The printed text on this file could not be read.")], [], [])
 
     if not boxes:
         return ([Signal(code="OCR_NO_TEXT_FOUND", engine="ocr", severity="medium",
                         message="No readable text found on the document. Genuine travel "
-                                "documents always carry printed text.")], [], [])
+                                "documents always carry printed text.",
+                        plain="No printed text could be found on the document at all, "
+                              "which a genuine passport or visa always has.")], [], [])
 
     texts = [b["text"] for b in boxes]
     mrz_lines = find_mrz_lines(texts)
@@ -136,6 +141,7 @@ def run(path: str, claimed: dict) -> tuple[list[Signal], list[str], list[dict]]:
             code="OCR_LOW_CONFIDENCE", engine="ocr", severity="low",
             message=f"Average OCR confidence is {avg_conf:.0%}; the document is blurred, "
                     f"low resolution, or a photograph of a screen.",
+            plain="The document image is too blurry or low quality to read reliably.",
             evidence={"avg_confidence": round(avg_conf, 3)},
         ))
 
@@ -154,13 +160,17 @@ def run(path: str, claimed: dict) -> tuple[list[Signal], list[str], list[dict]]:
                          f"on the uploaded document (weakest-matching part {weakest!r}, "
                          f"{best:.0f}% match). The applicant may be presenting another "
                          f"person's document."),
+                plain="The name typed into the form is not the name printed on "
+                      "the document.",
                 evidence={"claimed_name": name, "best_match_pct": round(best, 1),
                           "weakest_token": weakest},
             ))
         else:
             signals.append(Signal(
                 code="OCR_NAME_CONFIRMED", engine="ocr", severity="info",
-                message=f"Claimed name is printed on the document ({best:.0f}% match)."))
+                message=f"Claimed name is printed on the document ({best:.0f}% match).",
+                plain="The name typed into the form matches the name printed "
+                      "on the document."))
 
     if avg_conf >= MIN_CONFIDENCE_TO_JUDGE:
         flat = re.sub(r"[\s\-/]", "", blob)
@@ -170,6 +180,8 @@ def run(path: str, claimed: dict) -> tuple[list[Signal], list[str], list[dict]]:
             signals.append(Signal(
                 code="OCR_DOB_NOT_ON_DOCUMENT", engine="ocr", severity="medium",
                 message="The claimed date of birth is not printed on the uploaded document.",
+                plain="The date of birth typed into the form is not printed on "
+                      "the document.",
                 evidence={"dob": dob},
             ))
 
@@ -178,6 +190,8 @@ def run(path: str, claimed: dict) -> tuple[list[Signal], list[str], list[dict]]:
             signals.append(Signal(
                 code="OCR_NUMBER_NOT_ON_DOCUMENT", engine="ocr", severity="medium",
                 message="The claimed passport number is not printed on the uploaded document.",
+                plain="The passport number typed into the form is not printed "
+                      "on the document.",
                 evidence={"passport_no": value},
             ))
 
@@ -186,6 +200,8 @@ def run(path: str, claimed: dict) -> tuple[list[Signal], list[str], list[dict]]:
             code="OCR_MRZ_FOUND", engine="ocr", severity="info",
             message=f"Located {len(mrz_lines)} machine-readable zone line(s); "
                     f"passed to MRZ validation.",
+            plain="The machine-readable strip at the bottom of the page was "
+                  "found and checked.",
             evidence={"lines": mrz_lines}))
 
     return signals, mrz_lines, boxes

@@ -123,6 +123,9 @@ def run(frame_paths: list[str] | None, direction: str = DEFAULT_DIRECTION) -> li
                      f"(at least {MIN_FRAMES}, and at least "
                      f"{MIN_USABLE_FRACTION:.0%}, are needed). "
                      f"Ask the traveller to face the camera and repeat it."),
+            plain="The camera could not see the traveller's face clearly enough "
+                  "during the head-turn check. Ask them to repeat it, facing "
+                  "the camera directly.",
             evidence={"frames_used": n_total, "frames_with_face": n_usable})]
 
     proxies = [m[0] for m in usable]
@@ -149,6 +152,8 @@ def run(frame_paths: list[str] | None, direction: str = DEFAULT_DIRECTION) -> li
                      f"{towards}, the face rotated by {delta:.3f} of an eye width "
                      f"across {n_usable} frames (at least {YAW_DELTA_THRESHOLD} "
                      f"required). A flat photograph cannot do this."),
+            plain="The traveller's head visibly turned when asked, which a "
+                  "printed photo or phone screen cannot do.",
             evidence=evidence)]
 
     return [Signal(
@@ -161,4 +166,6 @@ def run(frame_paths: list[str] | None, direction: str = DEFAULT_DIRECTION) -> li
                  f"photograph held up to the camera "
                  f"(apparent size changed by {scale_change * 100:.0f}% over the "
                  f"same frames). Confirm the traveller in person."),
+        plain="The head did not move when asked, which is what happens when "
+              "someone holds a photograph up to the camera.",
         evidence=evidence)]

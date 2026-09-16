@@ -44,6 +44,8 @@ def _pdf_signals(path: str) -> list[Signal]:
         out.append(Signal(
             code="META_EDITING_SOFTWARE", engine="metadata", severity="medium",
             message=f"PDF was produced by image-editing software ({producer or creator}).",
+            plain="This PDF was made with image-editing software, not with a "
+                  "document scanner or issuing system.",
             evidence={"producer": producer, "creator": creator},
         ))
     c, m = str(info.get("/CreationDate", "")), str(info.get("/ModDate", ""))
@@ -52,11 +54,13 @@ def _pdf_signals(path: str) -> list[Signal]:
         out.append(Signal(
             code="META_PDF_MODIFIED_AFTER_CREATION", engine="metadata", severity="medium",
             message=f"PDF was modified ({m}) after it was created ({c}).",
+            plain="This PDF file was edited after it was first created.",
             evidence={"created": c, "modified": m},
         ))
     if not out:
         out.append(Signal(code="META_PDF_CLEAN", engine="metadata", severity="info",
-                          message="PDF metadata shows no editing-tool or post-modification traces."))
+                          message="PDF metadata shows no editing-tool or post-modification traces.",
+                          plain="Nothing in the PDF's file history suggests it was edited."))
     return out
 
 def _image_signals(path: str) -> list[Signal]:
@@ -74,6 +78,8 @@ def _image_signals(path: str) -> list[Signal]:
             code="META_EDITING_SOFTWARE", engine="metadata", severity="medium",
             message=f"Image carries an editing-software tag: {software!r}. "
                     f"A genuine capture would name a camera, not an editor.",
+            plain="This image's file details say it was made with photo-editing "
+                  "software, not photographed or scanned.",
             evidence={"software": software},
         ))
 
@@ -87,28 +93,37 @@ def _image_signals(path: str) -> list[Signal]:
             code="META_NO_CAMERA_EXIF", engine="metadata", severity="info",
             message="No camera make/model in EXIF. Normal for a scanned or issued "
                     "document image; recorded for provenance, not scored.",
+            plain="This image has no camera details attached, which is normal "
+                  "for a scanned or officially issued document.",
             evidence={"format": fmt, "size": list(size)},
         ))
     else:
         out.append(Signal(
             code="META_CAMERA_PRESENT", engine="metadata", severity="info",
             message=f"Camera EXIF present ({make} {model}).".strip(),
+            plain=f"This image's file details show it was taken with a camera "
+                  f"({make} {model}).".strip(),
             evidence={"make": make, "model": model},
         ))
 
     if not out:
         out.append(Signal(code="META_CLEAN", engine="metadata", severity="info",
-                          message="No metadata anomalies found."))
+                          message="No metadata anomalies found.",
+                          plain="Nothing in the file's hidden details looks unusual."))
     return out
 
 def run(path: str) -> list[Signal]:
     if not path or not os.path.exists(path):
         return [Signal(code="META_UNREADABLE", engine="metadata", severity="low",
-                       message="No document file was available for metadata analysis.")]
+                       message="No document file was available for metadata analysis.",
+                       plain="No document file was available, so its hidden file "
+                             "details could not be checked.")]
     try:
         if path.lower().endswith(".pdf"):
             return _pdf_signals(path)
         return _image_signals(path)
     except Exception as e:
         return [Signal(code="META_UNREADABLE", engine="metadata", severity="low",
-                       message=f"Metadata could not be parsed: {type(e).__name__}: {e}")]
+                       message=f"Metadata could not be parsed: {type(e).__name__}: {e}",
+                       plain="The file's hidden details could not be read on "
+                             "this file.")]

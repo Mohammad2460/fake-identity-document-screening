@@ -9,7 +9,9 @@ from app.models import ScreeningInput, ScreeningResult, Signal
 
 def _error_signal(engine_name: str, what: str, e: Exception) -> Signal:
     return Signal(code="ENGINE_ERROR", engine=engine_name, severity="low",
-                  message=f"{what} could not complete: {type(e).__name__}: {e}")
+                  message=f"{what} could not complete: {type(e).__name__}: {e}",
+                  plain="One check could not run on this file. The rest of the "
+                        "screening still completed.")
 
 
 def _safe(engine_name: str, fn, *args, **kwargs):

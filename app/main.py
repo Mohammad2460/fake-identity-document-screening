@@ -168,7 +168,8 @@ def api_screen(
             result = screen(inp, config.DB_PATH)
         body = result.to_dict()
         body["top_reasons"] = [
-            {"code": s.code, "engine": s.engine, "severity": s.severity, "message": s.message}
+            {"code": s.code, "engine": s.engine, "severity": s.severity,
+             "message": s.message, "plain": s.plain}
             for s in scoring.top_reasons(result.signals)
         ]
         body["evidence_url"] = (f"/evidence/{os.path.basename(result.evidence_path)}"

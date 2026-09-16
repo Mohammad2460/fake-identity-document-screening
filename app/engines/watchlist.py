@@ -94,6 +94,9 @@ def run(claimed: dict, path: str = "data/watchlist.csv",
                 message=(f"The name in {source_phrase} ({display_name!r}) matches "
                          f"{matched_name!r} on the {entry['list']} list "
                          f"({entry['reason']}, {entry['country']}) at {score:.0f}% similarity."),
+                plain=(f"This name, {display_name}, is on a sanctions list "
+                       f"({entry['list']}). A match this close needs an officer's "
+                       f"decision before the traveller is admitted."),
                 evidence=ev,
             ))
         else:
@@ -102,6 +105,9 @@ def run(claimed: dict, path: str = "data/watchlist.csv",
                 message=(f"The name in {source_phrase} ({display_name!r}) is a partial "
                          f"match ({score:.0f}%) to {matched_name!r} on the {entry['list']} "
                          f"list. Manual analyst review required."),
+                plain=(f"This name, {display_name}, is a partial match to a name "
+                       f"on the {entry['list']} sanctions list. An officer should "
+                       f"take a closer look."),
                 evidence=ev,
             ))
 
@@ -110,11 +116,15 @@ def run(claimed: dict, path: str = "data/watchlist.csv",
 
     if overall_best is None:
         return [Signal(code="WL_NO_MATCH", engine="watchlist", severity="info",
-                       message="No sanctions or PEP list entry resembles this name.")]
+                       message="No sanctions or PEP list entry resembles this name.",
+                       plain="This name does not resemble anyone on a sanctions "
+                             "or watch list.")]
 
     score, matched_name, entry = overall_best
     ev = {"matched": matched_name, "score": round(score, 1),
           "list": entry["list"], "country": entry["country"], "reason": entry["reason"]}
     return [Signal(code="WL_NO_MATCH", engine="watchlist", severity="info",
                    message=f"No watchlist entry above {REVIEW_THRESHOLD}% similarity "
-                           f"(closest: {matched_name!r} at {score:.0f}%).", evidence=ev)]
+                           f"(closest: {matched_name!r} at {score:.0f}%).",
+                   plain="This name does not resemble anyone on a sanctions or "
+                         "watch list.", evidence=ev)]

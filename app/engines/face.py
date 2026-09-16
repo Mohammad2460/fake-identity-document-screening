@@ -87,12 +87,15 @@ def match_score(doc_path: str, selfie_path: str) -> float | None:
 def run(doc_path: str, selfie_path: str | None) -> list[Signal]:
     if not doc_path or not os.path.exists(doc_path):
         return [Signal(code="FACE_UNREADABLE", engine="face", severity="low",
-                       message="No document image available for portrait analysis.")]
+                       message="No document image available for portrait analysis.",
+                       plain="No document photo was available, so the portrait "
+                             "could not be checked.")]
     try:
         doc_faces = detect_faces(doc_path)
     except Exception as e:
         return [Signal(code="FACE_UNREADABLE", engine="face", severity="low",
-                       message=f"Face analysis failed: {type(e).__name__}: {e}")]
+                       message=f"Face analysis failed: {type(e).__name__}: {e}",
+                       plain="The portrait check could not run on this file.")]
 
     signals: list[Signal] = []
 
@@ -104,12 +107,17 @@ def run(doc_path: str, selfie_path: str | None) -> list[Signal]:
             code="FACE_NO_PORTRAIT_ON_DOC", engine="face", severity="medium",
             message="No portrait photograph was detected on the document. "
                     "Every genuine photo ID carries one.",
+            plain="No photograph of the holder was found on the document. "
+                  "A genuine passport or visa always has one.",
         ))
     elif kind == "multiple":
         signals.append(Signal(
             code="FACE_MULTIPLE_PORTRAITS", engine="face", severity="high",
             message=f"{len(doc_faces)} faces detected on a single ID document — "
                     f"consistent with a photo pasted over the original portrait.",
+            plain="More than one face was found in the photograph area, which "
+                  "is what happens when a new photo is glued or pasted over "
+                  "the original.",
             evidence={"count": len(doc_faces)},
         ))
     elif kind == "ghost":
@@ -117,12 +125,16 @@ def run(doc_path: str, selfie_path: str | None) -> list[Signal]:
             code="FACE_GHOST_IMAGE_PRESENT", engine="face", severity="info",
             message="Primary portrait plus smaller ghost image(s), as printed on "
                     "modern passports.",
+            plain="A main photo plus a smaller security image was found, which "
+                  "is normal on modern passports.",
             evidence={"count": len(doc_faces)},
         ))
         has_single_primary_portrait = True
     else:  # "single"
         signals.append(Signal(code="FACE_PORTRAIT_PRESENT", engine="face", severity="info",
                               message="A single portrait was detected on the document.",
+                              plain="A single photograph of the holder was found on "
+                                    "the document, as expected.",
                               evidence={"box": doc_faces[0]["box"],
                                         "confidence": round(doc_faces[0]["confidence"], 3)}))
         has_single_primary_portrait = True
@@ -137,19 +149,25 @@ def run(doc_path: str, selfie_path: str | None) -> list[Signal]:
         score = match_score(doc_path, selfie_path)
     except Exception as e:
         signals.append(Signal(code="FACE_UNREADABLE", engine="face", severity="low",
-                              message=f"Selfie comparison failed: {type(e).__name__}: {e}"))
+                              message=f"Selfie comparison failed: {type(e).__name__}: {e}",
+                              plain="The selfie could not be compared with the "
+                                    "document photo."))
         return signals
 
     if score is None:
         signals.append(Signal(
             code="FACE_NO_SELFIE_FACE", engine="face", severity="medium",
-            message="No face could be located in the submitted selfie."))
+            message="No face could be located in the submitted selfie.",
+            plain="No face could be found in the selfie, so it could not be "
+                  "compared with the document photo."))
     elif score < DEFINITE_MISMATCH:
         signals.append(Signal(
             code="FACE_MISMATCH", engine="face", severity="critical",
             message=(f"The selfie does not match the portrait on the document "
                      f"(similarity {score:.2f}, same-person threshold {SAME_PERSON}). "
                      f"The document belongs to a different person."),
+            plain="The person in the selfie is not the person in the passport "
+                  "photograph.",
             evidence={"similarity": round(score, 3), "threshold": SAME_PERSON}))
     elif score < SAME_PERSON:
         signals.append(Signal(
@@ -157,10 +175,13 @@ def run(doc_path: str, selfie_path: str | None) -> list[Signal]:
             message=(f"Selfie-to-portrait similarity is {score:.2f}, below the "
                      f"{SAME_PERSON} same-person threshold but not a clear mismatch. "
                      f"Manual review required."),
+            plain="The selfie and the document photo look similar but not close "
+                  "enough to be certain. An officer should take a look.",
             evidence={"similarity": round(score, 3)}))
     else:
         signals.append(Signal(
             code="FACE_MATCH", engine="face", severity="info",
             message=f"Selfie matches the document portrait (similarity {score:.2f}).",
+            plain="The selfie matches the photograph on the document.",
             evidence={"similarity": round(score, 3)}))
     return signals

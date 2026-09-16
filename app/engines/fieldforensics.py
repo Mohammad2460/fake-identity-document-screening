@@ -174,7 +174,9 @@ def run(path: str, ocr_boxes: list[dict],
         portrait_box: tuple | None = None) -> tuple[list[Signal], list[dict]]:
     if not path or not os.path.exists(path):
         return ([Signal(code="FF_UNREADABLE", engine="fieldforensics", severity="low",
-                        message="No document image available for field-level analysis.")], [])
+                        message="No document image available for field-level analysis.",
+                        plain="No document photo was available, so we could not check "
+                              "individual fields for tampering.")], [])
 
     try:
         with Image.open(path) as im:
@@ -228,7 +230,9 @@ def run(path: str, ocr_boxes: list[dict],
         return ([Signal(
             code="FF_NO_REGIONS", engine="fieldforensics", severity="low",
             message=(f"Only {len(regions)} analysable region(s) found; field-level "
-                     f"comparison needs at least {MIN_REGIONS}."))], [])
+                     f"comparison needs at least {MIN_REGIONS}."),
+            plain="Too little of the document was readable to compare one field "
+                  "against another, so field-by-field tampering could not be checked.")], [])
 
     try:
         ela = ela_map(path, channel="luma")
@@ -245,7 +249,9 @@ def run(path: str, ocr_boxes: list[dict],
             backgrounds.append(float(np.median([background_luminance(gray, b) for b in sboxes])))
     except Exception as e:
         return ([Signal(code="FF_UNREADABLE", engine="fieldforensics", severity="low",
-                        message=f"Field analysis failed: {type(e).__name__}: {e}")], [])
+                        message=f"Field analysis failed: {type(e).__name__}: {e}",
+                        plain="The field-by-field tampering check could not run on "
+                              "this file.")], [])
 
     for r, sc in zip(regions, scores):
         r["score"] = round(float(sc), 2)
@@ -311,6 +317,7 @@ def run(path: str, ocr_boxes: list[dict],
                          f"unit of detail of the printed text fields (genuine photos "
                          f"measure under {PORTRAIT_RATIO_MAX}x). The portrait was "
                          f"pasted in after the document was produced."),
+                plain="The photograph was replaced after the passport was issued.",
                 evidence={"box": list(r["box"]), "score": r["score"],
                           "relative_residual": rel, "threshold": PORTRAIT_RATIO_MAX,
                           "document_median": round(median, 2)}))
@@ -320,6 +327,8 @@ def run(path: str, ocr_boxes: list[dict],
                 message=(f"A stamp or seal region has a compression residual of "
                          f"{r['score']} {basis}. "
                          f"The stamp was added or altered after issue."),
+                plain="A visa stamp or seal was added or changed after the document "
+                      "was issued.",
                 evidence={"box": list(r["box"]), "score": r["score"],
                           "document_median": round(median, 2)}))
         else:
@@ -328,6 +337,9 @@ def run(path: str, ocr_boxes: list[dict],
                 message=(f"The field reading {r['label']!r} has a compression residual of "
                          f"{r['score']} {basis} - it was "
                          f"edited after the rest of the document was produced."),
+                plain=(f"The field reading {r['label']!r} was changed after this "
+                       f"passport was made. Every other field on the page was "
+                       f"printed at the same time; this one was not."),
                 evidence={"field_text": r["label"], "box": list(r["box"]),
                           "score": r["score"], "document_median": round(median, 2)}))
 
@@ -340,6 +352,8 @@ def run(path: str, ocr_boxes: list[dict],
             message=(f"{len(regions)} regions analysed; fields on a similar background share "
                      f"a consistent compression history (median residual {median:.2f}). "
                      f"No single field stands out as edited.{skip_note}"),
+            plain="We compared every field on the page against the others and found "
+                  "no sign that any one of them was edited after printing.",
             evidence={"regions_analysed": len(regions), "groups_skipped": skipped,
                       "document_median": round(median, 2)}))
     return signals, regions

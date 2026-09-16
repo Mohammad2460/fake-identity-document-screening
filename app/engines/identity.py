@@ -48,6 +48,8 @@ def run(claimed: dict) -> list[Signal]:
             code="ID_PASSPORT_FORMAT_ODD", engine="identity", severity="medium",
             message=f"Passport number {passport_no!r} does not match the 6-12 "
                     f"alphanumeric structure used by ICAO travel documents.",
+            plain=f"The passport number entered, {passport_no}, is not shaped "
+                  f"like a real passport number.",
             evidence={"passport_no": passport_no},
         ))
 
@@ -57,6 +59,8 @@ def run(claimed: dict) -> list[Signal]:
             s.append(Signal(
                 code="ID_DISPOSABLE_EMAIL", engine="identity", severity="high",
                 message=f"Email uses known disposable provider {domain!r}.",
+                plain="The email address is from a throwaway email service, the "
+                      "kind used to avoid being tracked or contacted again.",
                 evidence={"domain": domain},
             ))
         local = email.partition("@")[0]
@@ -68,17 +72,22 @@ def run(claimed: dict) -> list[Signal]:
                     code="ID_EMAIL_NAME_DIVERGENCE", engine="identity", severity="medium",
                     message=(f"Email local-part {local!r} shares nothing with the claimed "
                              f"name and is digit-heavy — typical of bulk-generated accounts."),
+                    plain="The email address does not resemble the traveller's name "
+                          "and looks machine-generated.",
                     evidence={"local_part": local},
                 ))
 
     if phone:
         if len(phone) < 10:
             s.append(Signal(code="ID_PHONE_TOO_SHORT", engine="identity", severity="medium",
-                            message=f"Phone number has only {len(phone)} digits."))
+                            message=f"Phone number has only {len(phone)} digits.",
+                            plain="The phone number entered is too short to be real."))
         elif _is_sequential(phone):
             s.append(Signal(
                 code="ID_PHONE_SEQUENTIAL", engine="identity", severity="high",
                 message=f"Phone number {phone!r} is a sequential or repeated digit run.",
+                plain="The phone number entered is a simple repeated or counting "
+                      "pattern, not a real number.",
                 evidence={"phone": phone},
             ))
 
@@ -87,17 +96,22 @@ def run(claimed: dict) -> list[Signal]:
             s.append(Signal(
                 code="ID_NAME_SUSPICIOUS", engine="identity", severity="high",
                 message=f"Name {name!r} contains a keyboard-run pattern, not a real name.",
+                plain="The name entered looks like random keyboard mashing, not "
+                      "a real name.",
                 evidence={"name": name},
             ))
         elif len(name.split()) < 2:
             s.append(Signal(code="ID_NAME_SINGLE_TOKEN", engine="identity", severity="low",
-                            message="Only one name token supplied; full legal name expected."))
+                            message="Only one name token supplied; full legal name expected.",
+                            plain="Only a single name was entered, where a full "
+                                  "legal name is expected."))
 
     if dob:
         d = _parse_dob(dob)
         if d is None:
             s.append(Signal(code="ID_DOB_UNPARSEABLE", engine="identity", severity="medium",
-                            message=f"Date of birth {dob!r} is not a recognised date format."))
+                            message=f"Date of birth {dob!r} is not a recognised date format.",
+                            plain="The date of birth entered is not a valid date."))
         else:
             age = (date.today() - d).days / 365.25
             if age < 0 or age > 110:
@@ -105,6 +119,8 @@ def run(claimed: dict) -> list[Signal]:
                     code="ID_DOB_IMPLAUSIBLE", engine="identity", severity="high",
                     message=f"Date of birth implies an age of {age:.0f}, which is either "
                             f"in the future or older than 110 years.",
+                    plain="The date of birth entered would make the traveller "
+                          "impossibly young or old.",
                     evidence={"dob": dob, "age": round(age, 1)},
                 ))
     return s

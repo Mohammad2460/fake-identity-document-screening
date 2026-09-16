@@ -14,6 +14,17 @@ number here is measured (see README's Calibration section and
 | Forged visa stamp | `fieldforensics` (stamp region ELA) | `FF_STAMP_TAMPERED` |
 | High volume | batch/`check_samples`-style bulk run + dashboard | — |
 
+## "How do you make findings understandable to a non-technical officer?"
+
+Every finding is shown in plain language first — one or two short sentences
+naming what was checked and what it means for this traveller, no jargon, no
+internal numbers. The precise forensic sentence (compression residuals, check
+digits, cosine similarity) is still there, one click away behind a
+"Technical detail" toggle, so the evidence is never hidden — it is just not
+the first thing an officer has to parse. This is the explainability claim,
+made concrete: `Signal.plain` and `Signal.message` are two separate,
+independently-tested fields on every signal (`app/models.py`).
+
 ## "Is this real AI or just if-statements?"
 
 Both, deliberately. Perception is neural: RapidOCR (PaddleOCR's models, ONNX),

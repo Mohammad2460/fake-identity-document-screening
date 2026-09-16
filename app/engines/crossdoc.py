@@ -36,8 +36,10 @@ def _names_agree(a: str, b: str) -> bool:
 
 
 _FIELDS = [
-    ("passport_no", "XDOC_PASSPORT_NO_MISMATCH", "passport number", "critical"),
-    ("nationality", "XDOC_NATIONALITY_MISMATCH", "nationality", "high"),
+    ("passport_no", "XDOC_PASSPORT_NO_MISMATCH", "passport number", "critical",
+     "The passport number is different on the two documents."),
+    ("nationality", "XDOC_NATIONALITY_MISMATCH", "nationality", "high",
+     "The nationality is different on the two documents."),
 ]
 
 
@@ -50,7 +52,7 @@ def run(sources: list[dict]) -> list[Signal]:
     seen: set[tuple] = set()
 
     for a, b in combinations(usable, 2):
-        for key, code, label, severity in _FIELDS:
+        for key, code, label, severity, plain in _FIELDS:
             va, vb = _norm(a.get(key)), _norm(b.get(key))
             if va and vb and va != vb and (code, key) not in seen:
                 seen.add((code, key))
@@ -59,6 +61,7 @@ def run(sources: list[dict]) -> list[Signal]:
                     message=(f"The {label} disagrees between documents: "
                              f"{a.get('source', 'unknown source')} says {a.get(key)!r}, "
                              f"{b.get('source', 'unknown source')} says {b.get(key)!r}."),
+                    plain=plain,
                     evidence={a.get("source", "unknown source"): a.get(key), b.get("source", "unknown source"): b.get(key)},
                 ))
 
@@ -70,6 +73,7 @@ def run(sources: list[dict]) -> list[Signal]:
                 message=(f"The date of birth disagrees between documents: "
                          f"{a.get('source', 'unknown source')} says {a.get('dob')!r}, "
                          f"{b.get('source', 'unknown source')} says {b.get('dob')!r}."),
+                plain="The date of birth is different on the two documents.",
                 evidence={a.get("source", "unknown source"): a.get("dob"), b.get("source", "unknown source"): b.get("dob")},
             ))
 
@@ -80,6 +84,7 @@ def run(sources: list[dict]) -> list[Signal]:
                 code="XDOC_NAME_MISMATCH", engine="crossdoc", severity="high",
                 message=(f"The holder's name disagrees between documents: "
                          f"{a.get('source', 'unknown source')} says {na!r}, {b.get('source', 'unknown source')} says {nb!r}."),
+                plain=f"The name is different on the two documents: {na} vs {nb}.",
                 evidence={a.get("source", "unknown source"): na, b.get("source", "unknown source"): nb},
             ))
 
@@ -88,5 +93,7 @@ def run(sources: list[dict]) -> list[Signal]:
             code="XDOC_CONSISTENT", engine="crossdoc", severity="info",
             message=(f"Name, date of birth, passport number and nationality agree across "
                      f"all {len(usable)} sources ({', '.join(x.get('source', 'unknown source') for x in usable)})."),
+            plain="The name, date of birth, passport number and nationality all "
+                  "agree across every document checked.",
         ))
     return signals

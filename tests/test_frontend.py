@@ -92,6 +92,28 @@ def test_app_js_reasons_heading_counts_all_findings():
     assert '"· top "' in js and "nonInfo" in js
 
 
+def test_reason_cards_lead_with_the_plain_sentence():
+    """task-21: a reason card's main text is the plain-language line, not the
+    technical message directly."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "signal.plain || signal.message" in js
+    assert 'el("p", { class: "card-message", text: plainText }' in js
+
+
+def test_reason_cards_have_a_collapsed_technical_detail_toggle():
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert '"aria-expanded": "false"' in js
+    assert '"aria-controls": detailId' in js
+    assert "Technical detail" in js
+    assert "hidden: true" in js  # the technical detail starts collapsed
+
+
+def test_all_output_cards_show_both_lines_without_a_toggle():
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "cardList(reasons, true)" in js
+    assert "cardList(signals, false)" in js
+
+
 def test_index_has_inline_favicon_and_short_nationality_label(client):
     html = client.get("/").text
     assert '<link rel="icon" href="data:,">' in html

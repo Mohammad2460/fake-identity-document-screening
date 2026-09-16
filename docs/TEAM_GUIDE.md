@@ -98,7 +98,7 @@ You make the slides and speak on stage. **This is one of the highest-scoring job
   6. **Live demo** (the Lead runs it while you talk) — include the **live selfie** moment:
      the traveller's own face captured on the webcam, matched to the passport photo, plus
      the **liveness check** (turn your head) catching a printed photo held up to the camera
-  7. **Why you can trust it** — every decision explained; works offline; no real personal data
+  7. **Why you can trust it** — every decision explained; works offline; no real personal data. Point at the "Why" panel: every finding shows a plain-English sentence first, with the forensic detail one click away behind "Technical detail" — so an officer never has to read jargon to understand a verdict.
   8. **Limitations** — be honest (see Role 3's list)
   9. **Future scope** — trained AI model, liveness check, connecting to immigration systems
   10. **Thank you / team**

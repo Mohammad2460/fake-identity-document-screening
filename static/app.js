@@ -728,13 +728,22 @@ function renderExhibit(evidenceUrl, evidenceSource, signals) {
   exhibit.hidden = false;
 }
 
-/** One signal as a card: severity chip, engine name, code, full message. */
-function signalCard(signal) {
+let cardIdCounter = 0;
+
+/** One signal as a card: severity chip, engine name, code, plain-language line.
+ *
+ * withToggle=true (reason cards): leads with the plain sentence; the precise
+ * technical `message` sits behind a collapsed "Technical detail" disclosure.
+ * withToggle=false (all-output cards): both lines are always shown, plain
+ * first, with no toggle — this is the full audit trail.
+ */
+function signalCard(signal, withToggle) {
   const sev = SEVERITIES[signal.severity] || SEVERITIES.info;
   const sevKey = SEVERITIES[signal.severity] ? signal.severity : "info";
   const engineName = ENGINE_NAMES[signal.engine] || String(signal.engine || "");
+  const plainText = signal.plain || signal.message;
 
-  return el("li", { class: "card" }, [
+  const body = [
     el("div", { class: "card-top" }, [
       el("span", { class: "t-label chip chip-" + sevKey }, [
         el("span", { "aria-hidden": "true", text: sev.glyph }),
@@ -743,13 +752,41 @@ function signalCard(signal) {
       el("span", { class: "t-label card-engine", text: engineName }),
       el("span", { class: "t-mono-sm card-code", text: signal.code }),
     ]),
-    el("p", { class: "card-message", text: signal.message }),
-  ]);
+    el("p", { class: "card-message", text: plainText }),
+  ];
+
+  if (withToggle) {
+    cardIdCounter += 1;
+    const detailId = "card-detail-" + cardIdCounter;
+    const detail = el("p", {
+      class: "card-technical",
+      id: detailId,
+      text: signal.message,
+      hidden: true,
+    });
+    const toggle = el("button", {
+      type: "button",
+      class: "card-technical-toggle",
+      "aria-expanded": "false",
+      "aria-controls": detailId,
+      text: "Technical detail",
+    });
+    toggle.addEventListener("click", () => {
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      toggle.setAttribute("aria-expanded", String(!expanded));
+      detail.hidden = expanded;
+    });
+    body.push(toggle, detail);
+  } else {
+    body.push(el("p", { class: "card-technical", text: signal.message }));
+  }
+
+  return el("li", { class: "card" }, body);
 }
 
-function cardList(signals) {
+function cardList(signals, withToggle) {
   return el("ul", { class: "card-list", role: "list" },
-    signals.map(signalCard));
+    signals.map((s) => signalCard(s, withToggle)));
 }
 
 function renderReasons(reasons, signals) {
@@ -766,7 +803,7 @@ function renderReasons(reasons, signals) {
   ]);
 
   const body = reasons.length
-    ? cardList(reasons)
+    ? cardList(reasons, true)
     : el("p", { class: "card is-none", text: "No check raised a concern." });
 
   section.replaceChildren(heading, body);
@@ -785,7 +822,7 @@ function renderAllOutput(signals, engineErrors) {
       el("ul", { class: "t-mono-sm" }, engineErrors.map((line) => el("li", { text: line }))),
     ]));
   }
-  inner.push(cardList(signals));
+  inner.push(cardList(signals, false));
 
   const details = el("details", { class: "all-output" }, [
     el("summary", { class: "t-label", text: "All check results · " + signals.length }),

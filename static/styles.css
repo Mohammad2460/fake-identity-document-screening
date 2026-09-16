@@ -366,6 +366,20 @@ input[type="text"]:focus-visible, input[type="tel"]:focus-visible, input[type="e
 .card-engine { color: var(--ink-3); }
 .card-code { color: var(--ink-3); margin-left: auto; overflow-wrap: anywhere; }
 .card-message { max-width: 68ch; color: var(--ink); overflow-wrap: anywhere; }
+.card-technical { max-width: 68ch; color: var(--ink-3); overflow-wrap: anywhere; margin-top: var(--s-2); }
+.card-technical-toggle {
+  display: inline-flex;
+  align-items: center;
+  margin-top: var(--s-2);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-3);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+.card-technical-toggle:hover { color: var(--ink); }
 
 .card.is-none { background: var(--clear-subtle); border-color: var(--clear-subtle); color: var(--clear-text); }
 

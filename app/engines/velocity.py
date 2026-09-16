@@ -30,6 +30,8 @@ def run(claimed: dict, doc_hash: str | None, db_path: str) -> list[Signal]:
                     message=(f"This exact document image was already submitted in case "
                              f"{conflicting_dupes[0]['case_id']} under the name "
                              f"{conflicting_dupes[0]['full_name']!r}."),
+                    plain=(f"This exact document was already submitted before, under "
+                           f"a different name: {conflicting_dupes[0]['full_name']}."),
                     evidence={"prior_case": conflicting_dupes[0]["case_id"]},
                 ))
             else:
@@ -37,6 +39,7 @@ def run(claimed: dict, doc_hash: str | None, db_path: str) -> list[Signal]:
                     code="VEL_RESUBMISSION", engine="velocity", severity="info",
                     message=(f"This exact document was already screened before for the "
                              f"same person, in case {dupes[0]['case_id']}."),
+                    plain="This document has been screened before for the same person.",
                     evidence={"prior_case": dupes[0]["case_id"]},
                 ))
 
@@ -52,6 +55,8 @@ def run(claimed: dict, doc_hash: str | None, db_path: str) -> list[Signal]:
                 message=(f"The same passport number has previously been submitted under "
                          f"{len(conflicting)} different name(s): "
                          f"{', '.join(sorted(conflicting))}."),
+                plain="This same passport number has been used before under a "
+                      "different name.",
                 evidence={"conflicting_names": sorted(conflicting)},
             ))
 
@@ -61,9 +66,14 @@ def run(claimed: dict, doc_hash: str | None, db_path: str) -> list[Signal]:
             message=(f"{db.recent_count(db_path, BURST_WINDOW_MINUTES)} applications "
                      f"received in the last {BURST_WINDOW_MINUTES} minutes — "
                      f"consistent with automated bulk submission."),
+            plain="A large number of applications have come in within a few "
+                  "minutes, which looks like an automated bulk submission "
+                  "rather than individual travellers.",
         ))
 
     if not signals:
         signals.append(Signal(code="VEL_NO_PRIOR_HISTORY", engine="velocity", severity="info",
-                              message="No prior submission matches this identity or document."))
+                              message="No prior submission matches this identity or document.",
+                              plain="No earlier screening matches this person or this "
+                                    "document."))
     return signals

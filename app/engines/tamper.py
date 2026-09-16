@@ -196,14 +196,16 @@ def noise_spread(path: str) -> float:
 def run(path: str) -> list[Signal]:
     if not path or not os.path.exists(path) or path.lower().endswith(".pdf"):
         return [Signal(code="TAMPER_UNREADABLE", engine="tamper", severity="low",
-                       message="No raster image available for pixel-level analysis.")]
+                       message="No raster image available for pixel-level analysis.",
+                       plain="No image was available for the whole-page tampering check.")]
     try:
         ela, ela_blocks = ela_anomaly(path)
         clone_pct, clone_matches = copy_move_score(path)
         spread = noise_spread(path)
     except Exception as e:
         return [Signal(code="TAMPER_UNREADABLE", engine="tamper", severity="low",
-                       message=f"Image could not be analysed: {type(e).__name__}: {e}")]
+                       message=f"Image could not be analysed: {type(e).__name__}: {e}",
+                       plain="The whole-page tampering check could not run on this file.")]
 
     signals: list[Signal] = []
 
@@ -214,6 +216,9 @@ def run(path: str) -> list[Signal]:
                      f"up to {ela:.1f}x worse, per unit of edge detail, than the rest of the "
                      f"document (threshold {ELA_SUSPICIOUS}). That area has a different "
                      f"compression history, which is what splicing looks like."),
+            plain="Part of this image has been pasted in from somewhere else. "
+                  "That area's compression history does not match the rest "
+                  "of the page.",
             evidence={"ela_ratio": round(ela, 2), "ela_blocks": ela_blocks},
         ))
 
@@ -222,6 +227,8 @@ def run(path: str) -> list[Signal]:
             code="TAMPER_COPY_MOVE", engine="tamper", severity="high",
             message=(f"{clone_matches} keypoints match another region of the same image "
                      f"at one consistent offset within one compact area - a cloned or duplicated region."),
+            plain="Part of this image was copied from another part of the same "
+                  "image, likely to hide or duplicate something.",
             evidence={"matches": clone_matches, "score": round(clone_pct, 2)},
         ))
 
@@ -231,6 +238,9 @@ def run(path: str) -> list[Signal]:
             message=(f"Noise level in smooth areas differs {spread:.1f}x across the image "
                      f"(threshold {NOISE_SPREAD_MAX}). A single capture or print has near-"
                      f"uniform noise; a pasted-in photograph carries its own."),
+            plain="Different parts of this image have different grain or noise, "
+                  "which is what happens when a photo from another source is "
+                  "pasted in.",
             evidence={"noise_spread": round(spread, 2)},
         ))
 
@@ -239,6 +249,8 @@ def run(path: str) -> list[Signal]:
             code="TAMPER_NONE_DETECTED", engine="tamper", severity="info",
             message=(f"No splicing, cloning or noise anomalies detected "
                      f"(ELA {ela:.1f}, clone matches {clone_matches}, noise {spread:.1f}x)."),
+            plain="No signs of pasting, copying or mismatched image noise "
+                  "were found on this page.",
             evidence={"ela_ratio": round(ela, 2), "clone_matches": clone_matches,
                       "noise_spread": round(spread, 2)},
         ))
