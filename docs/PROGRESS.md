@@ -223,3 +223,4 @@ Append one line per completed task: `hh:mm — T<n> done — note`
 2. Read the first 🟡 or ⬜ row above — that is the next task.
 3. `./.venv/bin/pytest -v` to see what currently passes.
 2026-09-16 — T16 complete: 7 samples all in band (genuine CLEAR 0), SFHQ photoreal portraits, live webcam selfie + head-turn liveness, demo specimen script. Checkpoint 4 code review found 11 issues + controller found 2 on a real-photo specimen (short MRZ read, stray MRZ fragment boxed red) + 1 camera UI issue; all 15 fixed. 361 tests. Pushed T16. NEXT: T17 batch mode (optional), T18 harden/rehearse (run.sh, DEMO_SCRIPT, JUDGE_QA), live camera test with a real person.
+2026-09-16 — T18 done: run.sh one-command start, docs/DEMO_SCRIPT.md (6 acts, measured verdicts), docs/JUDGE_QA.md, TEAM_GUIDE + README updated. 373 tests. Live demo verified with real people by the Lead. NEXT: T17 batch mode (optional), 2 rehearsals, final whole-branch review.
