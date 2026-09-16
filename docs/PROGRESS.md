@@ -119,12 +119,14 @@ A judge uses it without you touching the keyboard.
 
 | Task | What | Status |
 |---|---|---|
-| T16 | Sample generator — passport + visa, 7 fraud types | ⬜ |
-| T16.0 | ⚠️ Demo portraits must be **photo-realistic AI-generated faces of people who don't exist** (licence allows use). The face detector ignores drawn cartoon faces. Never a real person's photo. | ⬜ |
-| T16.1 | ⚠️ Add tests that a real (AI-generated) face IS detected and matched — only the "no face" paths are tested today. | ⬜ |
-| T16.2 | ⚠️ Demo name "Anna Maria Eriksson" partly matches a fake watchlist entry — change that watchlist entry so a genuine demo traveller shows no watchlist warning. | ⬜ |
-| T16.3 | **Calibration loop** — run all samples, retune T8/T10 thresholds | ⬜ |
-| T16.4 | ⚠️ **BLOCKING: rework T8 tamper for documents** (end-to-end today: genuine passport scores 49 = REVIEW) — it currently raises 2 high + 1 medium alarms on a *genuine* passport (copy-move matches repeated letters; noise check reads flat background as tampering). Clean passport must come out CLEAR. | ⬜ |
+| T16 | Sample generator — passport + visa, 7 fraud types | ✅ 7 cases, all in expected band |
+| T16.0 ✅ | ⚠️ Demo portraits must be **photo-realistic AI-generated faces of people who don't exist** (licence allows use). The face detector ignores drawn cartoon faces. Never a real person's photo. | ⬜ |
+| T16.1 ✅ | ⚠️ Add tests that a real (AI-generated) face IS detected and matched — only the "no face" paths are tested today. | ⬜ |
+| T16.2 ✅ | ⚠️ Demo name "Anna Maria Eriksson" partly matches a fake watchlist entry — change that watchlist entry so a genuine demo traveller shows no watchlist warning. | ⬜ |
+| T16.3 ✅ | **Calibration loop** — run all samples, retune T8/T10 thresholds | ⬜ |
+| T16.4 ✅ | ⚠️ **BLOCKING: rework T8 tamper for documents** (end-to-end today: genuine passport scores 49 = REVIEW) — it currently raises 2 high + 1 medium alarms on a *genuine* passport (copy-move matches repeated letters; noise check reads flat background as tampering). Clean passport must come out CLEAR. | ⬜ |
+| T16.5 ✅ | 🆕 **Live selfie demo** (user decision 2026-09-15): webcam "Take selfie" button in the website + local-only script that puts a consenting teammate's photo on a fake SPECIMEN passport (never committed, deleted after hackathon). 3 acts: genuine match CLEAR → wrong person MISMATCH → swapped photo boxed red REJECT. | ⬜ |
+| T16.6 ✅ | 🆕 **Liveness (nice-to-have, after T16.5 solid):** "turn your head left" challenge using YuNet landmarks; printed photo fails → REVIEW. Honest limit: video replay can fool it. | ⬜ |
 | T17 | Batch CSV screening + dashboard · *stretch, cut second* | ⬜ |
 
 **Gate:**
@@ -220,3 +222,4 @@ Append one line per completed task: `hh:mm — T<n> done — note`
 1. `git checkout build`
 2. Read the first 🟡 or ⬜ row above — that is the next task.
 3. `./.venv/bin/pytest -v` to see what currently passes.
+2026-09-16 — T16 complete: 7 samples all in band (genuine CLEAR 0), SFHQ photoreal portraits, live webcam selfie + head-turn liveness, demo specimen script. Checkpoint 4 code review found 11 issues + controller found 2 on a real-photo specimen (short MRZ read, stray MRZ fragment boxed red) + 1 camera UI issue; all 15 fixed. 361 tests. Pushed T16. NEXT: T17 batch mode (optional), T18 harden/rehearse (run.sh, DEMO_SCRIPT, JUDGE_QA), live camera test with a real person.
