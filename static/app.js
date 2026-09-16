@@ -197,6 +197,7 @@ const LIVENESS_DIRECTION = "left";  // the traveller's own left
 let cameraStream = null;
 let livenessFrames = [];
 let livenessTimer = null;
+let livenessResolve = null;   // pending livenessWait's own resolver, for cancellation
 let livenessAborted = false;
 
 /** The one place a stream is released. Safe to call when nothing is running. */
@@ -218,12 +219,23 @@ function cancelLivenessChallenge() {
     clearTimeout(livenessTimer);
     livenessTimer = null;
   }
+  // checkpoint-4 R9: clearTimeout alone stops the callback firing, but the
+  // Promise it would have resolved never settles, so the awaiting coroutine
+  // is suspended forever, pinning whatever frames it already captured. Wake
+  // it up immediately instead.
+  if (livenessResolve !== null) {
+    const resolve = livenessResolve;
+    livenessResolve = null;
+    resolve();
+  }
 }
 
 function livenessWait(ms) {
   return new Promise((resolve) => {
+    livenessResolve = resolve;
     livenessTimer = setTimeout(() => {
       livenessTimer = null;
+      livenessResolve = null;
       resolve();
     }, ms);
   });
@@ -246,6 +258,14 @@ function setupSelfieCamera() {
 
   const input = wrapper.querySelector('input[type="file"]');
   const removeBtn = wrapper.querySelector(".remove-btn");
+
+  // checkpoint-4 R1: this input's "change" also fires for an ordinary file
+  // pick (drag/drop or the file browser), which replaces whatever selfie the
+  // challenge frames were captured against. publishSelfie marks its OWN
+  // dispatch with _fromCamera so only a real file pick clears them here.
+  input.addEventListener("change", () => {
+    if (!input._fromCamera) clearLivenessFrames();
+  });
 
   const openBtn = el("button", { type: "button", class: "btn-secondary camera-btn",
                                  text: "Use camera" });
@@ -308,6 +328,21 @@ function setupSelfieCamera() {
     cancelLivenessChallenge();
     clearLivenessFrames();
     stopCameraStream();   // never hold two streams at once
+
+    // Pending: getUserMedia can sit waiting on the browser's own permission
+    // prompt for an arbitrary time. Hide "Use camera", say so, and keep
+    // Capture/Check liveness disabled until the stream is actually live -
+    // otherwise a click lands on a stage with no video yet (checkpoint-4 F3).
+    openBtn.hidden = true;
+    stage.hidden = false;
+    video.hidden = true;
+    canvas.hidden = true;
+    captureBtn.hidden = false;
+    challengeBtn.hidden = false;
+    retakeBtn.hidden = true;
+    setChallengeRunning(true);
+    status.textContent = "Starting camera — allow access when your browser asks.";
+
     try {
       cameraStream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 } },
@@ -325,13 +360,7 @@ function setupSelfieCamera() {
     video.srcObject = cameraStream;
     const playing = video.play();
     if (playing && typeof playing.catch === "function") playing.catch(() => {});
-    openBtn.hidden = true;
-    stage.hidden = false;
     video.hidden = false;
-    canvas.hidden = true;
-    captureBtn.hidden = false;
-    challengeBtn.hidden = false;
-    retakeBtn.hidden = true;
     setChallengeRunning(false);
     status.textContent = "Camera on. Press Capture when the face is centred, "
       + "or Check liveness to run the head-turn challenge.";
@@ -356,7 +385,12 @@ function setupSelfieCamera() {
       const transfer = new DataTransfer();
       transfer.items.add(new File([blob], "selfie.jpg", { type: "image/jpeg" }));
       input.files = transfer.files;
+      // checkpoint-4 R1: this dispatch reaches the same "change" listener a
+      // real file picker fires. Mark it as the camera's own update so that
+      // listener doesn't clear the challenge frames this capture belongs to.
+      input._fromCamera = true;
       input.dispatchEvent(new Event("change", { bubbles: true }));
+      input._fromCamera = false;
     }, "image/jpeg", 0.92);
   }
 
@@ -503,6 +537,10 @@ async function runScreening(formData) {
     return;
   }
   renderResult(body);
+  // checkpoint-4 R1: a completed screening's challenge frames belong to the
+  // selfie just submitted. Left in place, they would silently ride along on
+  // a later screening of a different document.
+  clearLivenessFrames();
 }
 
 // ---------------------------------------------------------------------------

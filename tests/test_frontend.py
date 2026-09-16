@@ -226,3 +226,86 @@ def test_liveness_engine_has_a_plain_english_name():
 def test_css_styles_the_liveness_prompt():
     css = (STATIC / "styles.css").read_text(encoding="utf-8")
     assert ".camera-prompt" in css
+
+
+# --- checkpoint-4 F3: the getUserMedia-pending state must not look broken ---
+def test_open_camera_hides_use_camera_button_before_awaiting_permission():
+    js = _js()
+    at = js.find("async function openCamera")
+    assert at != -1
+    body = js[at:js.find("\n  }", at)]
+    hide_at = body.find("openBtn.hidden = true")
+    await_at = body.find("await navigator.mediaDevices.getUserMedia")
+    assert hide_at != -1 and await_at != -1 and hide_at < await_at
+
+
+def test_open_camera_sets_a_pending_status_before_awaiting_permission():
+    js = _js()
+    at = js.find("async function openCamera")
+    body = js[at:js.find("\n  }", at)]
+    status_at = body.find('status.textContent = "Starting camera')
+    await_at = body.find("await navigator.mediaDevices.getUserMedia")
+    assert status_at != -1 and status_at < await_at
+
+
+def test_open_camera_disables_capture_before_awaiting_permission():
+    js = _js()
+    at = js.find("async function openCamera")
+    body = js[at:js.find("\n  }", at)]
+    running_at = body.find("setChallengeRunning(true)")
+    await_at = body.find("await navigator.mediaDevices.getUserMedia")
+    assert running_at != -1 and running_at < await_at
+
+
+def test_open_camera_error_path_restores_the_use_camera_button():
+    js = _js()
+    at = js.find("async function openCamera")
+    body = js[at:js.find("\n  }", at)]
+    catch_at = body.find("catch (err)")
+    assert catch_at != -1
+    assert "closeStage()" in body[catch_at:]   # closeStage restores openBtn.hidden = false
+
+
+# --- checkpoint-4 R9: cancelLivenessChallenge must wake a pending livenessWait ---
+def test_cancel_liveness_challenge_resolves_the_pending_wait():
+    js = _js()
+    at = js.find("function cancelLivenessChallenge")
+    body = js[at:js.find("\n}", at)]
+    assert "livenessResolve" in body and "resolve()" in body
+
+
+def test_liveness_wait_stores_its_resolver_for_cancellation():
+    js = _js()
+    at = js.find("function livenessWait")
+    body = js[at:js.find("\n}", at)]
+    assert "livenessResolve = resolve" in body
+
+
+# --- checkpoint-4 R1: stale liveness frames must not ride along on a later screening ---
+def test_run_screening_completion_clears_liveness_frames():
+    js = _js()
+    at = js.find("function runScreening")
+    assert at != -1
+    end = js.find("\nfunction ", at + 10)
+    body = js[at:end if end != -1 else len(js)]
+    assert "clearLivenessFrames()" in body
+
+
+def test_selfie_input_change_clears_frames_when_not_from_the_camera():
+    js = _js()
+    setup_at = js.find("function setupSelfieCamera")
+    assert setup_at != -1
+    at = js.find('input.addEventListener("change"', setup_at)
+    assert at != -1, "the selfie file input's own change handler must be present"
+    body = js[at:js.find("});", at) + 3]
+    assert "clearLivenessFrames" in body
+    assert "_fromCamera" in body
+
+
+def test_publish_selfie_marks_its_own_dispatch_as_from_camera():
+    js = _js()
+    at = js.find("function publishSelfie")
+    body = js[at:js.find("\n  }", at)]
+    mark_at = body.find("input._fromCamera = true")
+    dispatch_at = body.find("input.dispatchEvent")
+    assert mark_at != -1 and mark_at < dispatch_at
