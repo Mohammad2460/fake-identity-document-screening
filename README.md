@@ -35,3 +35,23 @@ on the committed SFHQ synthetic crops in `data/faces/`:
 |---|---|
 | Same synthetic face vs. itself resized + re-saved as JPEG q80 | 0.934 |
 | Two different synthetic faces (`sfhq_01` vs `sfhq_02`) | 0.163 (below `DEFINITE_MISMATCH`) |
+
+`liveness` (challenge-response head turn, `YAW_DELTA_THRESHOLD = 0.045`). The measure is the
+yaw proxy — `(nose_x − eye_midpoint_x) / inter-eye distance`, so it is scale-invariant — and
+how far its median moves between the first and last third of the challenge frames.
+
+Reproduce with `./.venv/bin/python -m scripts.tune_liveness`. **These sequences are synthetic
+warps of the committed SFHQ crops, not recorded humans** — no real person's face may enter
+this repo. A real person on camera is the operator's check, not a measured number here.
+
+| Sequence (8 frames, built from `data/faces/`) | Yaw-proxy movement | Verdict |
+|---|---|---|
+| Synthetic head turn, 0→28°, nose depth 0.45 × face width (7 crops) | +0.065 … +0.120 | `LIVENESS_PASS` |
+| Flat photo rotated about its own vertical axis, 0→28° | −0.068 … −0.014 (always the wrong way) | `LIVENESS_FAILED` |
+| Static photo, shifted ±5 px and rescaled ±6% | −0.035 … +0.016 | `LIVENESS_FAILED` |
+
+`0.045` sits ~2.8× above the worst photograph and ~1.4× below the weakest synthetic turn.
+Geometry puts a real 25° turn near `0.16` (nose protrusion ≈ 0.32 × inter-eye distance ×
+tan θ), so a genuine turn should clear it comfortably. One crop (`sfhq_07`) does not move
+under the synthetic warp at all — a synthesis artefact, reported by the script and excluded
+from the live set.

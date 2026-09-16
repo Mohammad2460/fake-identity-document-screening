@@ -150,13 +150,17 @@ Yes. The tamper check can wrongly flag very sharp text or images that were never
 **"Why didn't you train your own deep-learning model?"**
 In 36 hours there is no ethical, labelled dataset of forged Indian passports to train on, and an unexplainable model is hard for an officer to trust. Training one on the SIDTD dataset is our clear next step.
 
+**"What stops me holding up a photo of someone else to the camera?"**
+We ask the traveller to turn their head, and we watch the nose. On a real head the nose sticks out in front of the eyes, so turning it moves the nose sideways away from the middle of the eyes. A flat photo has no nose sticking out, so nothing moves — and we say so, with the number we measured. Be honest about the limit: *"This is a challenge, not full anti-spoofing. A video replay of the right person turning their head would still get through. A dedicated anti-spoofing model is our next step."*
+
 **"How is this better than a human checking?"**
 It takes seconds instead of minutes, never gets tired, checks the maths a human can't do by eye, and points the officer directly at the suspicious field.
 
 ### Honest limitations (say these before a judge finds them)
 - The edit-detection can give false alarms on some images
 - Text reading works for English letters only
-- No liveness check (it can't tell a live face from a photo of a face)
+- Our liveness check is a head-turn challenge, not full anti-spoofing — a video replay could still beat it
+- The liveness threshold was measured on computer-generated turns, not on recorded real people
 - Not connected to government systems yet
 
 ### Practise

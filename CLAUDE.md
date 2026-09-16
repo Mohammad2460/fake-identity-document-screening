@@ -68,6 +68,7 @@ One Python process. FastAPI serves both the JSON API and the static frontend —
 | `fieldforensics` | **Which field** was tampered — per-region ELA on OCR boxes, portrait, stamps. ⭐ centerpiece |
 | `ocr` | Claimed name/DOB/number not printed on the uploaded document |
 | `face` | Missing or duplicate portrait; selfie-to-portrait mismatch |
+| `liveness` | A printed photo held to the webcam — challenge-response head turn on YuNet landmarks |
 | `tamper` | Whole-image splicing (ELA), cloning (ORB copy-move), noise inconsistency |
 | `metadata` | EXIF/PDF provenance — editor tags, missing camera data |
 | `crossdoc` | Passport vs visa vs prior submissions — same person, contradictory details |
@@ -103,7 +104,11 @@ Storage is three things, only one of them a database: sample images are **files 
 
 - ELA false-positives on high-contrast text and on non-JPEG sources. This is why tamper signals cap at `high`, never `critical`, and why one signal alone lands in REVIEW rather than REJECT.
 - OCR models are English-script. Non-Latin document text is out of scope.
-- No liveness detection, no deepfake/GAN-face detection, no live government API integration. All named as future work.
+- Liveness is a **challenge-response head turn**, not anti-spoofing: it defeats a printed photo or a
+  phone screen held to the webcam, and nothing more. A video replay of the right person turning, or a
+  photo bent around a curve, passes. Its threshold is calibrated on synthetic warps, not recorded humans.
+- No passive/bank-grade anti-spoofing, no deepfake/GAN-face detection, no live government API
+  integration. All named as future work.
 - Accuracy is quoted only against SIDTD, never invented.
 
 ## Git and GitHub
