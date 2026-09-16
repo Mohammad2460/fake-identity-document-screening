@@ -8,7 +8,7 @@ number here is measured (see README's Calibration section and
 
 | PS attack | Engine(s) | Signal codes |
 |---|---|---|
-| Altered photograph | `fieldforensics` (portrait region ELA), `face` (selfie match) | `FF_PHOTO_TAMPERED` |
+| Altered photograph | `fieldforensics` (portrait region ELA), `face` (selfie match), `facewatch` (wanted-face gallery) | `FF_PHOTO_TAMPERED` |
 | Altered name | `mrz` (name vs MRZ), `ocr` (claimed vs printed), `fieldforensics` | `MRZ_NAME_MISMATCH`, `XDOC_NAME_MISMATCH`, `FF_FIELD_TAMPERED` |
 | Altered DOB | `mrz` (ICAO check-digit arithmetic), `fieldforensics` (per-field ELA) | `MRZ_DOCNUM_CHECKSUM_FAIL`, `MRZ_COMPOSITE_CHECKSUM_FAIL`, `XDOC_DOB_MISMATCH`, `FF_FIELD_TAMPERED` |
 | Forged visa stamp | `fieldforensics` (stamp region ELA) | `FF_STAMP_TAMPERED` |
@@ -24,6 +24,21 @@ digits, cosine similarity) is still there, one click away behind a
 the first thing an officer has to parse. This is the explainability claim,
 made concrete: `Signal.plain` and `Signal.message` are two separate,
 independently-tested fields on every signal (`app/models.py`).
+
+## "What stops a wanted person just using a different name?"
+
+Nothing about the *name* watchlist — every name source it screens (the typed name, the
+passport MRZ, the visa MRZ) is text a forger controls, and a cleanly forged passport in a
+name that was never listed passes all three. A face is different: it cannot be retyped.
+`app/engines/facewatch.py` compares the document portrait and the live selfie separately
+against a gallery of wanted people's faces (`data/face_watchlist.csv`), reusing the same
+SFace cosine threshold as the selfie-match engine (critical at 0.363, a "possible match —
+officer should check" band at 0.30). A document with a genuine page, a perfect MRZ, and a
+name on no list still comes back REJECT if the face is a match. The committed gallery is
+two SFHQ synthetic crops (`sfhq_05`, `sfhq_06`) — the mechanism is real, the gallery is a
+demonstration, not a production watchlist. A real deployment points `facewatch` at an
+actual wanted-persons face database the same way `data/watchlist.csv` stands in for a
+production sanctions feed.
 
 ## "Is this real AI or just if-statements?"
 

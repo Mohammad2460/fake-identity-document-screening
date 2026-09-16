@@ -2,8 +2,8 @@
 import os
 import uuid
 from app import annotate, config, db, scoring
-from app.engines import (crossdoc, face, fieldforensics, identity, liveness,
-                         metadata, mrz, ocr, tamper, velocity, watchlist)
+from app.engines import (crossdoc, face, facewatch, fieldforensics, identity,
+                         liveness, metadata, mrz, ocr, tamper, velocity, watchlist)
 from app.models import ScreeningInput, ScreeningResult, Signal
 
 
@@ -156,6 +156,12 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
         collect("metadata", metadata.run, inp.doc_path)
         collect("tamper", tamper.run, inp.doc_path)
         collect("face", face.run, inp.doc_path, inp.selfie_path)
+
+        # Task 23: a wanted traveller's face is not something a forger can retype.
+        # Screens the document portrait and the selfie against the wanted-face
+        # gallery, catching the case the name watchlist structurally cannot.
+        collect("facewatch", facewatch.run, inp.doc_path, inp.selfie_path,
+                facewatch.GALLERY_PATH)
 
         # 6. The centerpiece: which field was altered - regions kept, drawing deferred
         # until we know whether the visa also has a suspect region (ruling: at most

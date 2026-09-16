@@ -167,6 +167,11 @@ was swapped for someone else's, it flags a mismatch and the case is rejected.
 **"What stops me holding up a photo of someone else to the camera?"**
 We ask the traveller to turn their head, and we watch the nose. On a real head the nose sticks out in front of the eyes, so turning it moves the nose sideways away from the middle of the eyes. A flat photo has no nose sticking out, so nothing moves — and we say so, with the number we measured. Be honest about the limit: *"This is a challenge, not full anti-spoofing. A video replay of the right person turning their head would still get through. A dedicated anti-spoofing model is our next step."*
 
+**"What stops a wanted person from just typing a different name?"**
+A name can be retyped, but a face can't. We also compare the passport photo and the live
+selfie against a small gallery of wanted people's faces, so a wanted traveller is caught
+even on a passport in a name that was never on any watchlist.
+
 **"How is this better than a human checking?"**
 It takes seconds instead of minutes, never gets tired, checks the maths a human can't do by eye, and points the officer directly at the suspicious field.
 

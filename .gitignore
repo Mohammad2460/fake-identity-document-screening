@@ -15,4 +15,5 @@ pip_install.log
 data/demo/
 data/demo_*/
 data/watchlist.local.csv
+data/face_watchlist.local.csv
 .DS_Store

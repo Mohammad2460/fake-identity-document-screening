@@ -52,6 +52,7 @@ case history that makes cross-document and duplicate-submission detection possib
 | `metadata` | EXIF/PDF provenance — editor tags, missing camera data | `META_NO_CAMERA_EXIF` |
 | `crossdoc` | Passport vs. visa vs. prior submissions — same person, contradictory details | `XDOC_DOB_MISMATCH`, `XDOC_NAME_MISMATCH`, `XDOC_PASSPORT_NO_MISMATCH` |
 | `watchlist` | Sanctions/PEP name matches, fuzzy so transliteration doesn't evade | `WL_MATCH`, `WL_NEAR_MATCH` |
+| `facewatch` | Document portrait and selfie vs. a gallery of wanted faces — catches a wanted traveller under a clean forged name, which the text-only name watchlist cannot | `FACE_WL_MATCH`, `FACE_WL_POSSIBLE` |
 | `velocity` | Same document under different names, duplicates, bulk bursts | — |
 
 Cut an engine instantly by setting its weight to `0.0` in `app/config.py`'s
@@ -99,6 +100,13 @@ on the committed SFHQ synthetic crops in `data/faces/`:
 |---|---|
 | Same synthetic face vs. itself resized + re-saved as JPEG q80 | 0.934 |
 | Two different synthetic faces (`sfhq_01` vs `sfhq_02`) | 0.163 (below `DEFINITE_MISMATCH`) |
+
+`facewatch` reuses these same thresholds (`FACE_WL_MATCH = SAME_PERSON = 0.363`,
+`FACE_WL_POSSIBLE = 0.30`) against a small gallery of SFHQ crops (`data/face_watchlist.csv`:
+`sfhq_05`, `sfhq_06`). Measured cross-similarities among the gallery faces and the other
+committed SFHQ crops used elsewhere (samples, demo builder, liveness) were all well below
+0.30 (highest observed 0.207), so nothing already in the repo accidentally triggers the
+gallery.
 
 `liveness` (challenge-response head turn, `YAW_DELTA_THRESHOLD = 0.045`). The measure is the
 yaw proxy — `(nose_x − eye_midpoint_x) / inter-eye distance`, so it is scale-invariant — and

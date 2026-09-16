@@ -16,7 +16,7 @@ The PS names four attack types. Every one has an owning engine:
 
 | Attack named in the PS | Engine that catches it |
 |---|---|
-| altered photographs | `fieldforensics` (portrait region) + `face` |
+| altered photographs | `fieldforensics` (portrait region) + `face` + `facewatch` |
 | altered names | `mrz` (name vs MRZ) + `ocr` (name vs printed) + `fieldforensics` |
 | altered DOBs | `mrz` (check digit) + `fieldforensics` (per-field ELA) |
 | forged visa stamps | `fieldforensics` (stamp region) |
@@ -73,6 +73,7 @@ One Python process. FastAPI serves both the JSON API and the static frontend —
 | `metadata` | EXIF/PDF provenance — editor tags, missing camera data |
 | `crossdoc` | Passport vs visa vs prior submissions — same person, contradictory details |
 | `watchlist` | Sanctions / PEP name matches, fuzzy so transliteration doesn't evade — screens the typed name, the passport MRZ name, and the visa MRZ name |
+| `facewatch` | A wanted traveller under a clean forged name — screens the document portrait and the live selfie against a gallery of wanted faces, catching what the (text-only) name watchlist structurally cannot |
 | `velocity` | Same document under different names, duplicates, bulk bursts |
 
 ## Data — three sources, all synthetic
@@ -109,6 +110,9 @@ Storage is three things, only one of them a database: sample images are **files 
   photo bent around a curve, passes. Its threshold is calibrated on synthetic warps, not recorded humans.
 - No passive/bank-grade anti-spoofing, no deepfake/GAN-face detection, no live government API
   integration. All named as future work.
+- `facewatch`'s thresholds reuse SFace's published cosine same-person threshold (0.363); we have
+  not independently validated it. The committed gallery is a handful of SFHQ synthetic faces — it
+  demonstrates the mechanism, not a measured detection rate.
 - Accuracy is quoted only against SIDTD, never invented.
 
 ## Git and GitHub

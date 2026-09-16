@@ -17,6 +17,7 @@ ENGINE_WEIGHTS = {
     "tamper": 1.0,
     "ocr": 0.9,
     "face": 1.0,
+    "facewatch": 1.0,
     "crossdoc": 1.0,
     "liveness": 1.0,
 }
