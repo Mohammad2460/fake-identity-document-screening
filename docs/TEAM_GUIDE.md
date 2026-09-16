@@ -294,9 +294,11 @@ You make things look clear, and you make sure the demo survives if something goe
 - [ ] Camera permission for the browser already granted (open it and click "Use camera"
       once beforehand, so the permission popup never happens live on stage)
 - [ ] A printed photo (or a phone showing a photo) on hand for the liveness fail demo
-- [ ] The demo specimen passport built (`data/demo/demo_passport.jpg`) with a **consenting**
-      teammate's photo, and the details from `data/demo/demo_claimed.json` written down or
-      memorised for typing into the form
+- [ ] The demo documents built (`data/demo/`, one genuine pair plus one forgery per attack)
+      with a **consenting** teammate's photo, and the details from `data/demo/demo_claimed.json`
+      written down or memorised for typing into the form — see `docs/DEMO_SCRIPT.md`
+- [ ] `cases.db` deleted after the last rehearsal, so the velocity engine does not report a
+      bulk submission during the real demo
 
 ---
 

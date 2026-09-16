@@ -126,7 +126,7 @@ transliteration doesn't evade it.**
 If running long, cut Act 5 (liveness) first, then Act 6 (watchlist) — Acts 1-4
 are the core narrative and must never be cut.
 
-## Building the demo specimen
+## Building the demo documents
 
 Run once, before the hackathon, with a **consenting** teammate's photo (never
 committed, deleted after the event — see `scripts/make_demo_passport.py`):
@@ -136,17 +136,30 @@ committed, deleted after the event — see `scripts/make_demo_passport.py`):
     --photo path/to/teammate.jpg --name "RAHUL SHARMA"
 ```
 
-This writes `data/demo/demo_passport.jpg` (genuine specimen, expect CLEAR with a
-matching selfie) and `data/demo/demo_claimed.json` (what to type into the form).
-To also demo a swapped-photo forgery for Act 2-style evidence on a live face:
+One run writes the genuine pair and one forgery per attack, into `data/demo/`:
 
-```bash
-./.venv/bin/python -m scripts.make_demo_passport --consent \
-    --photo path/to/teammate.jpg --forge-photo path/to/other_teammate.jpg \
-    --name "RAHUL SHARMA"
-```
+| File | Attack | What the system says |
+|---|---|---|
+| `demo_passport.jpg` + `demo_visa.jpg` | none | CLEAR |
+| `demo_passport_dob_altered.jpg` | DOB retyped | the DOB field boxed red |
+| `demo_passport_name_altered.jpg` | surname retyped | field boxed red **and** an MRZ name mismatch |
+| `demo_passport_mrz_altered.jpg` | one MRZ digit changed | ICAO check digit fails |
+| `demo_visa_stamp_forged.jpg` | entry stamp added after issue | the stamp boxed red |
+| `demo_visa_wrong_passport.jpg` | visa issued against another passport | cross-document mismatch |
 
-`data/demo/` is gitignored. Delete it and the source photos after the hackathon.
+Add `--forge-photo path/to/other_teammate.jpg` for a swapped-photo passport too,
+and `--out data/demo_someone` to build a second person's set alongside the first.
+
+`data/demo/demo_claimed.json` holds what to type into the form, keyed by
+document: `genuine` for every file, except `dob_altered` and `name_altered`,
+which carry the forged value — an officer types what the document shows them.
+
+**Screen the genuine pair first.** Five screenings inside ten minutes trip the
+velocity engine's bulk-submission rule, which would add an unrelated finding to
+every later case. Delete `cases.db` between rehearsals.
+
+`data/demo/` and `data/demo_*/` are gitignored. Delete them and the source
+photos after the hackathon.
 
 ## If it breaks — fallback plan
 

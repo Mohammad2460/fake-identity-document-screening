@@ -131,9 +131,13 @@ def test_the_visa_watermark_avoids_the_portrait_the_stamp_and_the_mrz():
     assert top > PORTRAIT_BOX[3]          # below the portrait
     assert bottom < H - 110               # above the MRZ band
     # and to the left of the entry stamp, which starts at x=720
-    assert m.VISA_WATERMARK_CENTER_X + m.VISA_WATERMARK_MAX_WIDTH // 2 < 720
+    from scripts.make_samples import STAMP_BOX
+    assert m.VISA_WATERMARK_CENTER_X + m.VISA_WATERMARK_MAX_WIDTH // 2 < STAMP_BOX[0]
+    # and below the last printed row ("Valid until", value drawn at y=394..426)
+    assert top > 426
 
 
+@needs_models
 def test_the_genuine_passport_and_visa_screen_clear_together(tmp_path):
     written = _build_set(tmp_path)
     assert os.path.exists(written["visa"])
@@ -146,18 +150,21 @@ def test_the_genuine_passport_and_visa_screen_clear_together(tmp_path):
     assert result.band == "CLEAR", (result.band, result.score, codes)
 
 
+@needs_models
 def test_the_dob_variant_flags_the_date_of_birth_field(tmp_path):
     written = _build_set(tmp_path)
     result = _screen(written["dob_altered"], written["claimed_dob_altered"], tmp_path)
     assert "FF_FIELD_TAMPERED" in [s.code for s in result.signals]
 
 
+@needs_models
 def test_the_mrz_variant_fails_the_document_number_check_digit(tmp_path):
     written = _build_set(tmp_path)
     result = _screen(written["mrz_altered"], written["claimed"], tmp_path)
     assert "MRZ_DOCNUM_CHECKSUM_FAIL" in [s.code for s in result.signals]
 
 
+@needs_models
 def test_the_visa_variant_flags_the_entry_stamp(tmp_path):
     written = _build_set(tmp_path)
     result = _screen_pair(written["genuine"], written["visa_stamp_forged"],
@@ -165,8 +172,57 @@ def test_the_visa_variant_flags_the_entry_stamp(tmp_path):
     assert "FF_STAMP_TAMPERED" in [s.code for s in result.signals]
 
 
+def _band_is_marked(path, band, x_range):
+    """True when the watermark band carries the red-tinted SPECIMEN lettering."""
+    from PIL import Image
+    with Image.open(path) as im:
+        crop = im.convert("RGB").crop((x_range[0], band[0], x_range[1], band[1]))
+    # WATERMARK_RGBA is red over a pale page, so marked pixels are the ones
+    # whose red channel clearly leads their blue channel.
+    return sum(1 for r, g, b in crop.getdata() if r - b > 18) > 200
+
+
+@needs_models
 def test_every_written_document_carries_the_specimen_watermark(tmp_path):
     from scripts import make_demo_passport as m
     written = _build_set(tmp_path)
-    for key in ("genuine", "visa", "dob_altered", "mrz_altered", "visa_stamp_forged"):
+    visa_x = (m.VISA_WATERMARK_CENTER_X - m.VISA_WATERMARK_MAX_WIDTH // 2,
+              m.VISA_WATERMARK_CENTER_X + m.VISA_WATERMARK_MAX_WIDTH // 2)
+    for key in ("genuine", "dob_altered", "name_altered", "mrz_altered"):
         assert os.path.exists(written[key]), key
+        assert _band_is_marked(written[key], m.WATERMARK_BAND, (20, 980)), key
+    for key in ("visa", "visa_stamp_forged", "visa_wrong_passport"):
+        assert os.path.exists(written[key]), key
+        assert _band_is_marked(written[key], m.VISA_WATERMARK_BAND, visa_x), key
+
+
+@needs_models
+def test_the_name_variant_flags_the_field_and_contradicts_the_mrz(tmp_path):
+    written = _build_set(tmp_path)
+    result = _screen(written["name_altered"], written["claimed_name_altered"], tmp_path)
+    codes = [s.code for s in result.signals]
+    assert "FF_FIELD_TAMPERED" in codes
+    assert "MRZ_NAME_MISMATCH" in codes
+
+
+@needs_models
+def test_the_wrong_passport_visa_is_caught_only_across_the_two_documents(tmp_path):
+    written = _build_set(tmp_path)
+    result = _screen_pair(written["genuine"], written["visa_wrong_passport"],
+                          written["claimed"], tmp_path)
+    codes = [s.code for s in result.signals]
+    assert "XDOC_PASSPORT_NO_MISMATCH" in codes
+    # neither page is tampered - only the pair disagrees
+    assert "FF_PHOTO_TAMPERED" not in codes
+    assert "FF_STAMP_TAMPERED" not in codes
+
+
+def test_two_people_never_share_a_document_number():
+    """Otherwise the velocity engine reports the second set as the first
+    person's passport presented under a new name."""
+    from scripts.make_demo_passport import claimed_details, document_numbers
+    a, b = document_numbers("MOHAMMAD KHALID"), document_numbers("MOHAMMAD ZAID")
+    assert a[0] != b[0] and a[1] != b[1]
+    assert document_numbers("MOHAMMAD ZAID") == b          # deterministic
+    assert len(a[0]) == 8 and len(a[1]) == 9   # widths the OCR reads reliably
+    assert claimed_details("MOHAMMAD ZAID")["passport_no"] == b[0]

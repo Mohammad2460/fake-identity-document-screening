@@ -64,6 +64,18 @@ FACE_A = "sfhq_01.jpg"   # the genuine holder, Anna Maria Eriksson
 FACE_B = "sfhq_02.jpg"   # a different (also non-existent) person - the substituted photo
 PORTRAIT_BOX = (50, 120, 250, 380)   # x0, y0, x1, y1
 
+# The visa's entry stamp, shared by the genuine drawing and by every forgery
+# that adds one after issue, so the two can never drift apart.
+STAMP_BOX = (720, 330, 930, 470)      # x0, y0, x1, y1
+STAMP_TEXT_XY = (752, 382)
+STAMP_TEXT = "ENTRY  2026"
+STAMP_RGB = (30, 60, 170)
+
+
+def draw_entry_stamp(d: "ImageDraw.ImageDraw") -> None:
+    d.ellipse(list(STAMP_BOX), outline=STAMP_RGB, width=6)
+    d.text(STAMP_TEXT_XY, STAMP_TEXT, font=_font(26), fill=STAMP_RGB)
+
 def face_path(face_file: str) -> str:
     """A bare file name lives in data/faces; anything else is used as given, so
     scripts.make_demo_passport can pass a photo from outside the repo."""
@@ -136,8 +148,7 @@ def draw_visa(p: dict, *, visa_passport_no: str | None = None,
         d.text((FIELD_X, y + 18), value, font=_font(26), fill=(15, 15, 15))
     paste_portrait(img, face_file)
     if stamp:
-        d.ellipse([720, 330, 930, 470], outline=(30, 60, 170), width=6)
-        d.text((752, 382), "ENTRY  2026", font=_font(26), fill=(30, 60, 170))
+        draw_entry_stamp(d)
     l1, l2 = build_mrz("V", p["surname"], p["given"], visa_no, p["nat"],
                        p["dob"], p["sex"], p["expiry"], personal=issued_against)
     d.rectangle([0, H - 110, W, H], fill=(250, 250, 246))
@@ -224,9 +235,7 @@ def main() -> None:
     path = f"{OUT}/06_visa_forged_stamp.jpg"
     save_issued(draw_visa(BASE, stamp=False), path)
     img = reload(path)
-    d = ImageDraw.Draw(img)
-    d.ellipse([720, 330, 930, 470], outline=(30, 60, 170), width=6)
-    d.text((752, 382), "ENTRY  2026", font=_font(26), fill=(30, 60, 170))
+    draw_entry_stamp(ImageDraw.Draw(img))
     img.save(path, "JPEG", quality=97)
     save_issued(draw_passport(BASE), f"{OUT}/06_passport_for_visa.jpg")
     m.append({"files": {"document": "06_passport_for_visa.jpg",
