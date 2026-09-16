@@ -27,3 +27,11 @@ like with like; thresholds sit above the worst genuine value measured.
 Limits: a clone moved purely along a row or column (within 12px of an axis) is not reported
 by `TAMPER_COPY_MOVE` — typeset layout repeats exactly that way. Whole-image ELA does not
 catch a single retyped field (DOB peak 4.3); `fieldforensics` owns that.
+
+`face` (SFace cosine similarity, `SAME_PERSON = 0.363`, `DEFINITE_MISMATCH = 0.25`), measured
+on the committed SFHQ synthetic crops in `data/faces/`:
+
+| Comparison | Cosine similarity |
+|---|---|
+| Same synthetic face vs. itself resized + re-saved as JPEG q80 | 0.934 |
+| Two different synthetic faces (`sfhq_01` vs `sfhq_02`) | 0.163 (below `DEFINITE_MISMATCH`) |
