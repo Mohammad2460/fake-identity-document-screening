@@ -34,6 +34,17 @@ def test_find_mrz_lines_picks_out_chevron_rows():
 def test_find_mrz_lines_returns_empty_when_absent():
     assert ocr.find_mrz_lines(["JUST A NAME", "AND A DATE"]) == []
 
+def test_find_mrz_lines_keeps_a_short_line1_with_a_short_name():
+    """OCR ends line 1 where the filler run starts, so a two-token name yields
+    only ~22 characters. That is still a TD3 line 1 - the MRZ engine pads it -
+    and dropping it would make a genuine passport look malformed."""
+    lines = ["REPUBLIC OF UTOPIA", "P<UTOSHARMA<<RAHUL<<<<",
+             "U2938471<6UTO9204155M3307319<<<<<<<<<<<<<<04"]
+    assert ocr.find_mrz_lines(lines) == lines[1:]
+
+def test_find_mrz_lines_ignores_short_chevron_text_that_is_not_a_td3_line1():
+    assert ocr.find_mrz_lines(["ENTRY <<< 2026", "A<BCD<<<"]) == []
+
 def test_extract_boxes_returns_text_and_geometry(text_image):
     boxes = ocr.extract_boxes(text_image)
     assert boxes, "OCR found no text at all"

@@ -12,6 +12,11 @@ MONTH_ABBR = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
               "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 
 MRZ_RE = re.compile(r"^[A-Z0-9<]{25,}$")
+# OCR stops line 1 where its run of trailing fillers begins, so a traveller
+# with a short name leaves fewer than 25 characters. Keep a line that still
+# has TD3 line-1 shape (type, filler, 3-letter issuing state, names, filler);
+# mrz.normalise_td3 pads it back to 44. Nothing else on a document looks like this.
+TD3_LINE1_RE = re.compile(r"^[A-Z0-9]<[A-Z]{3}[A-Z<]{12,}<$")
 NAME_MATCH_THRESHOLD = 80
 MIN_CONFIDENCE_TO_JUDGE = 0.45   # below this, a miss is illegible text, not fraud
 
@@ -103,7 +108,7 @@ def number_on_document(claimed_number: str, flat_blob: str) -> bool:
 
 def find_mrz_lines(lines: list[str]) -> list[str]:
     candidates = [ln.strip().upper().replace(" ", "") for ln in lines if ln and "<" in ln]
-    return [ln for ln in candidates if MRZ_RE.match(ln)]
+    return [ln for ln in candidates if MRZ_RE.match(ln) or TD3_LINE1_RE.match(ln)]
 
 def run(path: str, claimed: dict) -> tuple[list[Signal], list[str], list[dict]]:
     if not path or not os.path.exists(path):
