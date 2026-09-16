@@ -22,8 +22,9 @@ import sys
 
 from PIL import Image, ImageDraw
 
-from scripts.make_samples import (H, W, _font, draw_passport, paste_portrait,
-                                  reload, save_issued)
+from scripts.make_samples import (FIELDS, H, W, _font, build_mrz, draw_passport,
+                                  draw_visa, paste_portrait, reload,
+                                  retype_field, save_issued)
 
 DEFAULT_OUT = "data/demo"
 
@@ -31,10 +32,24 @@ DEFAULT_OUT = "data/demo"
 DEMO_DOC = {"doc_no": "U2938471", "nat": "UTO", "dob": "920415",
             "sex": "M", "expiry": "330731"}
 
+# The visa is issued against that passport and carries its own MRV number.
+DEMO_VISA_NO = "V77341902"
+
+# What the forger retypes over the real 15/04/1992 - twenty-six years younger.
+FORGED_DOB_PRINTED = "15/04/1998"
+FORGED_DOB_CLAIMED = "1998-04-15"
+
 # The watermark lives in a band BELOW the portrait (which ends at y=380) and
 # ABOVE the MRZ (which starts at y=H-110), so neither the face engine nor the
 # MRZ reader loses anything. A test asserts both bounds.
 WATERMARK_BAND = (390, 520)
+
+# The visa's own safe band: below the portrait (ends y=380), above the MRZ
+# (starts y=H-110), and left of the entry stamp (starts x=720) so the stamp
+# region stays a clean subject for field forensics. A test asserts all three.
+VISA_WATERMARK_BAND = (400, 505)
+VISA_WATERMARK_MAX_WIDTH = 620
+VISA_WATERMARK_CENTER_X = 350
 WATERMARK_TEXT = "SPECIMEN - NOT A REAL DOCUMENT"
 WATERMARK_ANGLE = 6
 WATERMARK_RGBA = (176, 38, 30, 70)
@@ -47,7 +62,7 @@ Consent recorded. Before you continue, read this out loud:
   - the document is a SPECIMEN. It is not, and must not be shown as, real."""
 
 
-def _watermark_layer(band_height: int) -> Image.Image:
+def _watermark_layer(band_height: int, max_width: int = W - 40) -> Image.Image:
     """The rotated, translucent SPECIMEN text, scaled to fit the band."""
     font = _font(38)
     probe = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
@@ -60,21 +75,39 @@ def _watermark_layer(band_height: int) -> Image.Image:
         scale = band_height / layer.height
         layer = layer.resize((max(1, round(layer.width * scale)), band_height),
                              Image.LANCZOS)
-    if layer.width > W - 40:
-        scale = (W - 40) / layer.width
-        layer = layer.resize((W - 40, max(1, round(layer.height * scale))),
+    if layer.width > max_width:
+        scale = max_width / layer.width
+        layer = layer.resize((max_width, max(1, round(layer.height * scale))),
                              Image.LANCZOS)
     return layer
 
 
-def draw_watermark(img: Image.Image) -> Image.Image:
+def draw_watermark(img: Image.Image, band: tuple[int, int] = WATERMARK_BAND,
+                   max_width: int = W - 40,
+                   center_x: int | None = None) -> Image.Image:
     """Stamp the specimen watermark. Drawn BEFORE the issue-save, so the whole
     page keeps one compression history and field forensics stays honest."""
-    top, bottom = WATERMARK_BAND
-    layer = _watermark_layer(bottom - top)
-    x = (W - layer.width) // 2
+    top, bottom = band
+    layer = _watermark_layer(bottom - top, max_width)
+    cx = W // 2 if center_x is None else center_x
+    x = cx - layer.width // 2
     y = top + (bottom - top - layer.height) // 2
     img.paste(layer, (x, y), layer)
+    return img
+
+
+def draw_visa_watermark(img: Image.Image) -> Image.Image:
+    return draw_watermark(img, band=VISA_WATERMARK_BAND,
+                          max_width=VISA_WATERMARK_MAX_WIDTH,
+                          center_x=VISA_WATERMARK_CENTER_X)
+
+
+def forge_entry_stamp(img: Image.Image) -> Image.Image:
+    """What a forger does to a visa: draw an entry stamp onto an issued page.
+    The stamp is the only region re-compressed, so it stands out from the rest."""
+    d = ImageDraw.Draw(img)
+    d.ellipse([720, 330, 930, 470], outline=(30, 60, 170), width=6)
+    d.text((752, 382), "ENTRY  2026", font=_font(26), fill=(30, 60, 170))
     return img
 
 
@@ -101,31 +134,69 @@ def claimed_details(name: str) -> dict:
 
 def build(photo: str, name: str, out_dir: str, forge_photo: str | None = None,
           sex: str | None = None) -> dict:
-    """Write the demo passport (and optionally its swapped-photo forgery)."""
+    """Write the full stage set: a genuine passport and visa for one consenting
+    person, plus forgeries of each that look right to the eye and are caught by
+    a different engine."""
     given, surname = split_name(name)
     person = dict(DEMO_DOC, surname=surname, given=given)
     if sex:
         person["sex"] = sex.upper()
+    photo = os.path.abspath(photo)
 
     os.makedirs(out_dir, exist_ok=True)
-    genuine = os.path.join(out_dir, "demo_passport.jpg")
-    img = draw_passport(person, face_file=os.path.abspath(photo))
-    save_issued(draw_watermark(img), genuine)
+    out = lambda n: os.path.join(out_dir, n)          # noqa: E731
+    claimed = claimed_details(name)
 
-    written = {"genuine": genuine, "forged": None,
-               "claimed": claimed_details(name)}
+    # 1. The genuine passport.
+    genuine = out("demo_passport.jpg")
+    save_issued(draw_watermark(draw_passport(person, face_file=photo)), genuine)
 
+    # 2. The genuine visa, issued against that passport, same face.
+    visa = out("demo_visa.jpg")
+    save_issued(draw_visa_watermark(
+        draw_visa(person, visa_passport_no=person["doc_no"],
+                  visa_no=DEMO_VISA_NO, face_file=photo)), visa)
+
+    # 3. Forgery A - the date of birth painted over and retyped. Only that field
+    # was re-saved, so its compression history differs from every other field
+    # while the MRZ still encodes the true 1992 date.
+    dob_altered = out("demo_passport_dob_altered.jpg")
+    save_issued(draw_watermark(draw_passport(person, face_file=photo)), dob_altered)
+    retype_field(reload(dob_altered), FIELDS.index("Date of birth"),
+                 FORGED_DOB_PRINTED).save(dob_altered, "JPEG", quality=97)
+
+    # 4. Forgery B - one digit of the passport number changed in the MRZ. The
+    # page is otherwise untouched; ICAO 9303 check-digit arithmetic catches it.
+    l1, l2 = build_mrz("P", person["surname"], person["given"], person["doc_no"],
+                       person["nat"], person["dob"], person["sex"], person["expiry"])
+    bad = l2[:3] + ("9" if l2[3] != "9" else "7") + l2[4:]
+    mrz_altered = out("demo_passport_mrz_altered.jpg")
+    save_issued(draw_watermark(
+        draw_passport(person, mrz_override=(l1, bad), face_file=photo)), mrz_altered)
+
+    # 5. Forgery C - an entry stamp added to the visa after it was issued.
+    visa_forged = out("demo_visa_stamp_forged.jpg")
+    save_issued(draw_visa_watermark(
+        draw_visa(person, visa_passport_no=person["doc_no"], visa_no=DEMO_VISA_NO,
+                  stamp=False, face_file=photo)), visa_forged)
+    forge_entry_stamp(reload(visa_forged)).save(visa_forged, "JPEG", quality=97)
+
+    written = {"genuine": genuine, "visa": visa, "dob_altered": dob_altered,
+               "mrz_altered": mrz_altered, "visa_stamp_forged": visa_forged,
+               "forged": None, "claimed": claimed,
+               "claimed_dob_altered": dict(claimed, dob=FORGED_DOB_CLAIMED)}
+
+    # 6. Forgery D (optional) - exactly what a forger does: paste another face
+    # into the issued document and re-save.
     if forge_photo:
-        # Exactly what a forger does: paste another face into the issued
-        # document and re-save. The photo region's compression history now
-        # differs from the rest of the page -> FF_PHOTO_TAMPERED.
-        forged = os.path.join(out_dir, "demo_passport_forged.jpg")
+        forged = out("demo_passport_forged.jpg")
         paste_portrait(reload(genuine), os.path.abspath(forge_photo)) \
             .save(forged, "JPEG", quality=97)
         written["forged"] = forged
 
-    with open(os.path.join(out_dir, "demo_claimed.json"), "w") as fh:
-        json.dump(written["claimed"], fh, indent=2)
+    with open(out("demo_claimed.json"), "w") as fh:
+        json.dump({"genuine": written["claimed"],
+                   "dob_altered": written["claimed_dob_altered"]}, fh, indent=2)
     return written
 
 
@@ -158,14 +229,26 @@ def main(argv: list[str] | None = None) -> dict:
 
     print(CONSENT_NOTICE)
     print("\nWrote:")
-    print("  " + written["genuine"] + "   (genuine specimen - expect CLEAR)")
+    rows = [("genuine", "genuine passport - expect CLEAR"),
+            ("visa", "genuine visa for the same passport - upload with it, expect CLEAR"),
+            ("dob_altered", "date of birth retyped - expect the DOB field boxed red"),
+            ("mrz_altered", "one MRZ digit changed - expect the check digit to fail"),
+            ("visa_stamp_forged", "entry stamp added after issue - expect the stamp boxed red")]
     if written["forged"]:
-        print("  " + written["forged"] + "   (photo swapped - expect FF_PHOTO_TAMPERED)")
+        rows.append(("forged", "photograph swapped - expect the photo boxed red"))
+    for key, note in rows:
+        print("  " + written[key] + "   (" + note + ")")
     print("  " + os.path.join(args.out, "demo_claimed.json")
           + "   (what to type into the form)")
-    print("\nOn stage: upload the genuine specimen, type the details above, press "
-          '"Use camera", capture the live selfie, and screen. Then swap in the '
-          "forged file to show the photograph boxed red.")
+    print("\nType these details for every file except the DOB forgery:")
+    for k, v in written["claimed"].items():
+        print(f"    {k}: {v}")
+    print("  For " + os.path.basename(written["dob_altered"])
+          + " type dob: " + written["claimed_dob_altered"]["dob"]
+          + " instead - the officer is shown the forged date.")
+    print("\nOn stage: upload the genuine passport and visa, type the details "
+          'above, press "Use camera", capture the live selfie, and screen. Then '
+          "re-run with each forged file to show what was altered, boxed red.")
     print("\nDelete " + args.out + " and the source photo after the hackathon.")
     return written
 

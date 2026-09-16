@@ -117,7 +117,8 @@ def draw_passport(p: dict, mrz_override=None, face_file: str = FACE_A) -> Image.
     return img
 
 def draw_visa(p: dict, *, visa_passport_no: str | None = None,
-              visa_no: str = "V10293847", stamp: bool = True) -> Image.Image:
+              visa_no: str = "V10293847", stamp: bool = True,
+              face_file: str = FACE_A) -> Image.Image:
     img = Image.new("RGB", (W, H), (242, 238, 226))
     d = ImageDraw.Draw(img)
     d.rectangle([0, 0, W, 80], fill=(96, 30, 44))
@@ -133,7 +134,7 @@ def draw_visa(p: dict, *, visa_passport_no: str | None = None,
         y = FIELD_Y0 + i * 64
         d.text((FIELD_X, y), label.upper(), font=_font(14), fill=(110, 110, 110))
         d.text((FIELD_X, y + 18), value, font=_font(26), fill=(15, 15, 15))
-    paste_portrait(img)
+    paste_portrait(img, face_file)
     if stamp:
         d.ellipse([720, 330, 930, 470], outline=(30, 60, 170), width=6)
         d.text((752, 382), "ENTRY  2026", font=_font(26), fill=(30, 60, 170))

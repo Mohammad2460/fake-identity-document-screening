@@ -104,3 +104,69 @@ def test_the_genuine_and_forged_portraits_are_different_people(tmp_path):
 
 def test_data_demo_is_gitignored():
     assert "data/demo/" in open(".gitignore").read()
+
+
+# --- The full stage set: a matching visa and three realistic forgeries -------
+
+def _build_set(tmp_path):
+    from scripts import make_demo_passport
+    return make_demo_passport.main(["--consent", "--photo", PHOTO_A,
+                                    "--name", "RAHUL SHARMA",
+                                    "--out", str(tmp_path / "demo")])
+
+
+def _screen_pair(doc_path, visa_path, claimed, tmp_path):
+    p = str(tmp_path / "pair.db")
+    if os.path.exists(p):
+        os.remove(p)
+    db.init_db(p)
+    return pipeline.screen(ScreeningInput(claimed=claimed, doc_path=doc_path,
+                                          visa_path=visa_path), p)
+
+
+def test_the_visa_watermark_avoids_the_portrait_the_stamp_and_the_mrz():
+    from scripts import make_demo_passport as m
+    from scripts.make_samples import H, PORTRAIT_BOX
+    top, bottom = m.VISA_WATERMARK_BAND
+    assert top > PORTRAIT_BOX[3]          # below the portrait
+    assert bottom < H - 110               # above the MRZ band
+    # and to the left of the entry stamp, which starts at x=720
+    assert m.VISA_WATERMARK_CENTER_X + m.VISA_WATERMARK_MAX_WIDTH // 2 < 720
+
+
+def test_the_genuine_passport_and_visa_screen_clear_together(tmp_path):
+    written = _build_set(tmp_path)
+    assert os.path.exists(written["visa"])
+    result = _screen_pair(written["genuine"], written["visa"],
+                          written["claimed"], tmp_path)
+    codes = [s.code for s in result.signals]
+    assert "XDOC_PASSPORT_NO_MISMATCH" not in codes
+    assert "FF_PHOTO_TAMPERED" not in codes
+    assert "FF_STAMP_TAMPERED" not in codes
+    assert result.band == "CLEAR", (result.band, result.score, codes)
+
+
+def test_the_dob_variant_flags_the_date_of_birth_field(tmp_path):
+    written = _build_set(tmp_path)
+    result = _screen(written["dob_altered"], written["claimed_dob_altered"], tmp_path)
+    assert "FF_FIELD_TAMPERED" in [s.code for s in result.signals]
+
+
+def test_the_mrz_variant_fails_the_document_number_check_digit(tmp_path):
+    written = _build_set(tmp_path)
+    result = _screen(written["mrz_altered"], written["claimed"], tmp_path)
+    assert "MRZ_DOCNUM_CHECKSUM_FAIL" in [s.code for s in result.signals]
+
+
+def test_the_visa_variant_flags_the_entry_stamp(tmp_path):
+    written = _build_set(tmp_path)
+    result = _screen_pair(written["genuine"], written["visa_stamp_forged"],
+                          written["claimed"], tmp_path)
+    assert "FF_STAMP_TAMPERED" in [s.code for s in result.signals]
+
+
+def test_every_written_document_carries_the_specimen_watermark(tmp_path):
+    from scripts import make_demo_passport as m
+    written = _build_set(tmp_path)
+    for key in ("genuine", "visa", "dob_altered", "mrz_altered", "visa_stamp_forged"):
+        assert os.path.exists(written[key]), key
