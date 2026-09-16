@@ -144,7 +144,10 @@ the worst photograph reading and 1.4x below the weakest genuine turn.
   threshold was tuned to stop `01_clean_passport.jpg` from falsely alarming,
   not derived from first principles.
 - **No live government API or watchlist integration** — `data/watchlist.csv`
-  is a static, invented demo list.
+  is a static, invented demo list. Screening runs against every name source we
+  have for the case — the officer's typed entry, the passport MRZ name, and
+  the visa MRZ name — so a wanted traveller can't pass by typing a different
+  name than the one printed on their document.
 - **No deepfake/GAN-face detection.**
 
 ## "Why no LLM / cloud API?"

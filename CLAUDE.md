@@ -72,7 +72,7 @@ One Python process. FastAPI serves both the JSON API and the static frontend —
 | `tamper` | Whole-image splicing (ELA), cloning (ORB copy-move), noise inconsistency |
 | `metadata` | EXIF/PDF provenance — editor tags, missing camera data |
 | `crossdoc` | Passport vs visa vs prior submissions — same person, contradictory details |
-| `watchlist` | Sanctions / PEP name matches, fuzzy so transliteration doesn't evade |
+| `watchlist` | Sanctions / PEP name matches, fuzzy so transliteration doesn't evade — screens the typed name, the passport MRZ name, and the visa MRZ name |
 | `velocity` | Same document under different names, duplicates, bulk bursts |
 
 ## Data — three sources, all synthetic

@@ -48,6 +48,27 @@ def test_broken_document_path_does_not_crash(dbfile):
     assert isinstance(result.score, int)
 
 
+def test_watchlisted_mrz_name_rejects_even_with_clean_typed_name(dbfile, tmp_path):
+    """Task 20: a passport whose MRZ carries a watchlisted name must be caught
+    even when the officer types an unrelated, clean name at intake."""
+    from scripts import make_samples as ms
+
+    watchlisted = dict(surname="PETROV", given="VIKTOR ANATOLYEVICH", doc_no="Z1122334C",
+                       nat="UTO", dob="800101", sex="M", expiry="320101")
+    path = str(tmp_path / "watchlisted_passport.jpg")
+    ms.save_issued(ms.draw_passport(watchlisted), path)
+
+    inp = ScreeningInput(claimed={"full_name": "Jonathan Michael Brewster",
+                                 "dob": "1988-03-14", "passport_no": "Z1122334C",
+                                 "nationality": "UTO"},
+                         doc_path=path)
+    result = pipeline.screen(inp, dbfile)
+    assert result.band == "REJECT"
+    matches = [s for s in result.signals if s.code == "WL_MATCH"]
+    assert matches, [s.code for s in result.signals]
+    assert "passport MRZ" in matches[0].message
+
+
 def test_engine_exception_is_captured_not_raised(dbfile, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("engine exploded")

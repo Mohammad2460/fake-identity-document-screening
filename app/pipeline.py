@@ -116,13 +116,25 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
 
     # 3. Rules engines that need no image.
     collect("identity", identity.run, inp.claimed)
-    collect("watchlist", watchlist.run, inp.claimed)
+
+    # Task 20: watchlist screens every name source, not just the typed one -
+    # a wanted traveller must not pass by typing a different name than the one
+    # printed on their document.
+    passport_fields = _mrz_fields(mrz_lines, "passport")
+    visa_fields = _mrz_fields(visa_mrz, "visa")
+    extra_names = {}
+    if passport_fields and passport_fields["full_name"].strip():
+        extra_names["passport MRZ"] = passport_fields["full_name"]
+    if visa_fields and visa_fields["full_name"].strip():
+        extra_names["visa MRZ"] = visa_fields["full_name"]
+    collect("watchlist", watchlist.run, inp.claimed, "data/watchlist.csv", extra_names)
+
     collect("velocity", velocity.run, inp.claimed, doc_hash, db_path)
 
     # 4. Cross-document: passport MRZ vs visa MRZ vs the applicant's own claim.
     sources = [src for src in (
-        _mrz_fields(mrz_lines, "passport"),
-        _mrz_fields(visa_mrz, "visa"),
+        passport_fields,
+        visa_fields,
         {"source": "claimed", **{k: inp.claimed.get(k) for k in
                                  ("full_name", "dob", "passport_no", "nationality")}},
     ) if src]
