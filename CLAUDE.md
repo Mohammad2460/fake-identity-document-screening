@@ -110,7 +110,8 @@ Storage is three things, only one of them a database: sample images are **files 
   photo bent around a curve, passes. Its threshold is calibrated on synthetic warps, not recorded humans.
 - No passive/bank-grade anti-spoofing, no deepfake/GAN-face detection, no live government API
   integration. All named as future work.
-- `facewatch` matches at 0.50, stricter than SFace's published 0.363 same-person threshold,
+- `facewatch` matches at 0.50 and flags a possible match at 0.45, both stricter than SFace's
+  published 0.363 same-person threshold,
   because a gallery is 1:N identification and because we measured four pairs of *different*
   SFHQ faces at or above 0.363 (worst 0.425). That measurement is on 8 StyleGAN faces from one
   generator, not on real people. The committed gallery is a handful of synthetic faces — it

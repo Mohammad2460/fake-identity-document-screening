@@ -110,8 +110,9 @@ def test_missing_overlay_is_not_an_error(tmp_path):
 def test_editing_csv_is_picked_up_without_restart(tmp_path):
     path = str(tmp_path / "face_watchlist.csv")
     _csv(path, [])
-    signals = facewatch.run(GALLERY_FACE, None, path=path)
-    assert [s.code for s in signals] == ["FACE_WL_NO_MATCH"]
+    # An empty gallery is screened against nothing, so the engine stays silent
+    # rather than reporting a clear result it did not establish.
+    assert facewatch.run(GALLERY_FACE, None, path=path) == []
 
     time.sleep(0.01)
     _csv(path, [[GALLERY_FACE, "Nadia Husseini Farah", "SDN", "Asset freeze"]])
@@ -162,9 +163,11 @@ def test_no_two_distinct_faces_reach_the_gallery_threshold():
              if embeddings[a] is not None and embeddings[b] is not None]
     assert pairs, "no crops available to measure"
     worst, a, b = max(pairs)
-    assert worst < facewatch.FACE_WL_MATCH, (
+    assert worst < facewatch.FACE_WL_POSSIBLE, (
         f"{a} and {b} are different people but score {worst:.3f}, at or above "
-        f"the gallery match threshold {facewatch.FACE_WL_MATCH}")
+        f"{facewatch.FACE_WL_POSSIBLE} - the POSSIBLE band accuses an innocent "
+        f"traveller, so both bands must clear the worst impostor pair")
+    assert facewatch.FACE_WL_POSSIBLE < facewatch.FACE_WL_MATCH
     assert worst <= facewatch.MEASURED_IMPOSTOR_MAX + 0.01, (
         f"impostor similarity rose to {worst:.3f}; MEASURED_IMPOSTOR_MAX and the "
         f"numbers quoted in README/JUDGE_QA are stale")
@@ -189,3 +192,56 @@ def test_gallery_faces_are_not_reused_anywhere_else_in_the_repo():
         assert not unexpected, (
             f"{name} is in the wanted-face gallery but is also used by "
             f"{unexpected} - a demo portrait must never be a gallery face")
+
+
+@no_gallery_data
+def test_a_selfie_is_screened_even_when_there_is_no_document(tmp_path):
+    """The gallery matters most when the document is missing or unreadable -
+    that is the case the name watchlist cannot see at all."""
+    gallery = tmp_path / "g.csv"
+    _csv(gallery, [[GALLERY_FACE, "Wanted Person", "SDN", "Asset freeze"]])
+    sigs = facewatch.run(None, GALLERY_FACE, str(gallery))
+    assert [s.code for s in sigs] == ["FACE_WL_MATCH"]
+    assert "the selfie" in sigs[0].message
+
+
+@no_gallery_data
+def test_a_gallery_that_cannot_be_read_at_all_is_reported_not_cleared(tmp_path):
+    gallery = tmp_path / "g.csv"
+    _csv(gallery, [["data/faces/does_not_exist.jpg", "Wanted Person", "SDN", "x"]])
+    sigs = facewatch.run(GALLERY_FACE, None, str(gallery))
+    assert [s.code for s in sigs] == ["FACE_WL_UNAVAILABLE"]
+    assert sigs[0].severity == "low"
+
+
+@no_gallery_data
+def test_a_gallery_row_without_a_list_column_still_produces_the_match(tmp_path):
+    """The overlay is hand-authored by a teammate; a missing column must not
+    turn the one signal that matters into an engine error."""
+    gallery = tmp_path / "g.csv"
+    with open(gallery, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["file", "name"])
+        w.writerow([GALLERY_FACE, "Wanted Person"])
+    sigs = facewatch.run(GALLERY_FACE, None, str(gallery))
+    assert [s.code for s in sigs] == ["FACE_WL_MATCH"]
+    assert "unspecified" in sigs[0].message
+
+
+@no_gallery_data
+def test_the_overlay_works_even_without_a_committed_gallery(tmp_path):
+    gallery = tmp_path / "g.csv"          # deliberately never created
+    _csv(facewatch.local_overlay_path(str(gallery)),
+         [[GALLERY_FACE, "Local Wanted Person", "SDN", "Asset freeze"]])
+    sigs = facewatch.run(GALLERY_FACE, None, str(gallery))
+    assert [s.code for s in sigs] == ["FACE_WL_MATCH"]
+
+
+@no_gallery_data
+def test_each_source_is_reported_with_its_own_score(tmp_path):
+    """A 0.92 document portrait and a weak selfie must not both read as 0.92."""
+    gallery = tmp_path / "g.csv"
+    _csv(gallery, [[GALLERY_FACE, "Wanted Person", "SDN", "Asset freeze"]])
+    sigs = facewatch.run(GALLERY_FACE, GALLERY_FACE, str(gallery))
+    assert len(sigs) == 1
+    assert set(sigs[0].evidence["sources"]) == {"the document portrait", "the selfie"}

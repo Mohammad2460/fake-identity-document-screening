@@ -118,10 +118,14 @@ We also measured it. Across all 28 pairs of the 8 committed SFHQ crops — every
 
 These are StyleGAN faces from one generator and are more alike than a random sample of real
 people would be, but the measurement is ours and it says 0.363 is not a safe operating point
-for a gallery. `facewatch` therefore uses `FACE_WL_MATCH = 0.50` and `FACE_WL_POSSIBLE = 0.40`
-— clear of the worst impostor pair we measured (0.425), far below a genuine match (0.934).
+for a gallery. `facewatch` therefore uses `FACE_WL_MATCH = 0.50` and `FACE_WL_POSSIBLE = 0.45`. **Both**
+bands sit above the worst impostor pair we measured (0.425), because a medium "possible
+match" against an innocent traveller is still an accusation carrying points; and both sit
+far below a genuine match (0.934), so the narrow band between them is uncertainty rather
+than noise.
 `tests/test_facewatch.py::test_no_two_distinct_faces_reach_the_gallery_threshold` re-measures
-this and fails if it ever stops holding.
+this on every run and fails if any two distinct faces reach **either** band, or if the worst
+pair drifts above the figure quoted here.
 
 The committed gallery is `data/face_watchlist.csv` (`sfhq_05`, `sfhq_06`); a second test
 asserts no gallery face is reused as a demo portrait, since that would make its holder's own

@@ -33,7 +33,7 @@ name that was never listed passes all three. A face is different: it cannot be r
 `app/engines/facewatch.py` compares the document portrait and the live selfie separately
 against a gallery of wanted people's faces (`data/face_watchlist.csv`). It uses a
 **stricter** threshold than the selfie-match engine — critical at 0.50, a "possible match —
-officer should check" band at 0.40 — because a gallery is 1:N identification rather than 1:1
+officer should check" band at 0.45 — because a gallery is 1:N identification rather than 1:1
 verification, and because we measured four pairs of *different* synthetic faces scoring at or
 above SFace's published 0.363 same-person threshold (worst 0.425). If a judge asks how we
 chose 0.50: from that measurement, which is in the README and re-run by the test suite.

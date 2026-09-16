@@ -157,12 +157,6 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
         collect("tamper", tamper.run, inp.doc_path)
         collect("face", face.run, inp.doc_path, inp.selfie_path)
 
-        # Task 23: a wanted traveller's face is not something a forger can retype.
-        # Screens the document portrait and the selfie against the wanted-face
-        # gallery, catching the case the name watchlist structurally cannot.
-        collect("facewatch", facewatch.run, inp.doc_path, inp.selfie_path,
-                facewatch.GALLERY_PATH)
-
         # 6. The centerpiece: which field was altered - regions kept, drawing deferred
         # until we know whether the visa also has a suspect region (ruling: at most
         # one evidence image per case).
@@ -173,6 +167,15 @@ def screen(inp: ScreeningInput, db_path: str = config.DB_PATH) -> ScreeningResul
         except Exception as e:
             errors.append(f"fieldforensics: {type(e).__name__}: {e}")
             signals.append(_error_signal("fieldforensics", "Field-level analysis", e))
+
+    # 6b. Task 23: a wanted traveller's face is not something a forger can
+    # retype. Screens the document portrait and the selfie against the
+    # wanted-face gallery, catching the case the name watchlist structurally
+    # cannot. Runs on whichever pictures exist: a selfie with no readable
+    # document is exactly when the gallery matters most.
+    if has_doc or inp.selfie_path:
+        collect("facewatch", facewatch.run, inp.doc_path, inp.selfie_path,
+                facewatch.GALLERY_PATH)
 
     # 7. Same analysis on the visa (reusing its OCR boxes) - catches a forged entry stamp.
     if has_visa:

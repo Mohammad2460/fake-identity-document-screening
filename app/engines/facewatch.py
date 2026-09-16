@@ -31,10 +31,12 @@ GALLERY_PATH = "data/face_watchlist.csv"
 # alike than a random sample of real people would be, but the measurement is
 # ours and it says 0.363 is not a safe operating point for a gallery.
 #
-# 0.50 clears our worst measured impostor pair by a wide margin and sits far
-# below a genuine match (same face, resized and re-encoded: 0.9342).
+# Both bands clear our worst measured impostor pair (0.425), because a medium
+# "possible match" against an innocent traveller is still an accusation with
+# points attached. 0.50 sits far below a genuine match (same face, resized and
+# re-encoded: 0.9342), so the narrow 0.45-0.50 band is uncertainty, not noise.
 FACE_WL_MATCH = 0.50
-FACE_WL_POSSIBLE = 0.40
+FACE_WL_POSSIBLE = 0.45
 
 # The highest similarity we have measured between two different people. Tests
 # assert the gallery keeps clear of it; quoted in README and JUDGE_QA.
@@ -70,9 +72,15 @@ def _load_rows(path: str, path_mtime, overlay: str, overlay_mtime) -> tuple:
 
 
 def load_gallery(path: str = GALLERY_PATH) -> tuple:
-    if not os.path.exists(path):
-        return tuple()
+    """Rows from the committed gallery plus the gitignored overlay.
+
+    Either may be absent: the overlay is the documented way to screen a
+    consenting stand-in, and it must keep working if the committed gallery is
+    renamed or removed.
+    """
     overlay = local_overlay_path(path)
+    if not os.path.exists(path) and not os.path.exists(overlay):
+        return tuple()
     return _load_rows(path, _mtime(path), overlay, _mtime(overlay))
 
 
@@ -115,10 +123,9 @@ def _score(a, b) -> float:
 
 def run(doc_path: str | None, selfie_path: str | None,
         path: str = GALLERY_PATH) -> list[Signal]:
-    if not os.path.exists(path):
-        return []
-
     rows = load_gallery(path)
+    if not rows:
+        return []
 
     sources = []
     if doc_path and os.path.exists(doc_path):
@@ -139,9 +146,11 @@ def run(doc_path: str | None, selfie_path: str | None,
     if not source_embeddings:
         return []
 
-    # Best score per gallery row, keeping which source(s) hit it.
-    best_overall = None  # (score, row)
-    per_person: dict[str, dict] = {}  # name -> {"row":..., "best": score, "labels": []}
+    # Best score per gallery row, keeping which source(s) hit it and at what
+    # score, so the message can attribute each one honestly.
+    best_overall = None                 # (score, row)
+    per_person: dict[str, dict] = {}    # name -> {"row", "best", "labels": {label: score}}
+    skipped = 0
 
     for row in rows:
         img_path = row.get("file", "")
@@ -150,58 +159,73 @@ def run(doc_path: str | None, selfie_path: str | None,
         except Exception:
             gallery_emb = None
         if gallery_emb is None:
-            continue  # missing file, undecodable, or no detectable face - skip silently (R6)
-
-        row_best = None
-        row_labels = []
-        for label, emb in source_embeddings:
-            score = _score(emb, gallery_emb)
-            if row_best is None or score > row_best:
-                row_best = score
-            if score >= FACE_WL_POSSIBLE:
-                row_labels.append((label, score))
-
-        if row_best is None:
+            # missing file, undecodable, or no detectable face (R6)
+            skipped += 1
             continue
+
+        scored = [(label, _score(emb, gallery_emb)) for label, emb in source_embeddings]
+        row_best = max(score for _, score in scored)
         if best_overall is None or row_best > best_overall[0]:
             best_overall = (row_best, row)
 
-        if row_labels:
-            name = (row.get("name") or "").strip()
-            if not name:
-                continue
-            entry = per_person.setdefault(name, {"row": row, "best": 0.0, "labels": []})
-            for label, score in row_labels:
-                if label not in [l for l, _ in entry["labels"]]:
-                    entry["labels"].append((label, score))
-                if score > entry["best"]:
-                    entry["best"] = score
+        hits = {label: score for label, score in scored if score >= FACE_WL_POSSIBLE}
+        if not hits:
+            continue
+        name = (row.get("name") or "").strip()
+        if not name:
+            skipped += 1
+            continue
+
+        entry = per_person.get(name)
+        if entry is None or row_best > entry["best"]:
+            # Keep the row that actually scored best: two rows can share a name
+            # while naming different lists, and the signal must not attribute
+            # the match to the wrong one.
+            entry = {"row": row, "best": row_best, "labels": {}}
+            per_person[name] = entry
+        for label, score in hits.items():
+            if score > entry["labels"].get(label, 0.0):
+                entry["labels"][label] = score
+
+    # A gallery whose every row failed to load must not read as a clean screen:
+    # a relative path resolved from the wrong working directory, or a typo in
+    # the hand-authored overlay, would clear every traveller silently.
+    if rows and skipped == len(rows):
+        return [Signal(
+            code="FACE_WL_UNAVAILABLE", engine="facewatch", severity="low",
+            message=(f"The wanted-face gallery could not be read: all "
+                     f"{len(rows)} entries failed to load. No face screening "
+                     f"was performed."),
+            plain="The wanted-face list could not be loaded, so the photograph "
+                  "was not checked against it.",
+            evidence={"rows": len(rows), "skipped": skipped})]
 
     if not per_person:
-        if best_overall is None:
-            return [Signal(code="FACE_WL_NO_MATCH", engine="facewatch", severity="info",
-                           message="The gallery of wanted faces was screened; no match found.",
-                           plain="The photograph does not resemble anyone on the "
-                                 "wanted-face list.")]
+        closest = ("" if best_overall is None
+                   else f" (closest similarity {best_overall[0]:.2f})")
         return [Signal(code="FACE_WL_NO_MATCH", engine="facewatch", severity="info",
-                       message=(f"The gallery of wanted faces was screened; no match "
-                                f"found (closest similarity {best_overall[0]:.2f})."),
+                       message=f"The gallery of wanted faces was screened; no "
+                               f"match found{closest}.",
                        plain="The photograph does not resemble anyone on the "
                              "wanted-face list.")]
 
     signals: list[Signal] = []
     for name, info in per_person.items():
         row = info["row"]
-        best = info["best"]
-        labels = [l for l, _ in info["labels"]]
-        source_phrase = " and ".join(labels)
+        labels = sorted(info["labels"], key=info["labels"].get, reverse=True)
+        best = info["labels"][labels[0]]
+        listed = (row.get("list") or "unspecified").strip() or "unspecified"
+        # Name each source with its own score: a 0.92 document portrait and a
+        # 0.46 selfie must not both read as 0.92.
+        source_phrase = " and ".join(f"{l} ({info['labels'][l]:.2f})" for l in labels)
         ev = {"similarity": round(best, 3), "threshold": FACE_WL_MATCH,
-              "list": row["list"], "sources": labels}
+              "list": listed, "sources": {l: round(sc, 3)
+                                          for l, sc in info["labels"].items()}}
 
         if best >= FACE_WL_MATCH:
             signals.append(Signal(
                 code="FACE_WL_MATCH", engine="facewatch", severity="critical",
-                message=(f"{source_phrase} matches {name!r} on the {row['list']} "
+                message=(f"{source_phrase} matches {name!r} on the {listed} "
                          f"wanted-face list ({row.get('reason', '')}) at similarity "
                          f"{best:.2f} (threshold {FACE_WL_MATCH})."),
                 plain=(f"The face in {_plain_sources(labels)} is on the wanted "
@@ -211,8 +235,8 @@ def run(doc_path: str | None, selfie_path: str | None,
         else:
             signals.append(Signal(
                 code="FACE_WL_POSSIBLE", engine="facewatch", severity="medium",
-                message=(f"{source_phrase} looks similar ({best:.2f}) to {name!r} on "
-                         f"the {row['list']} wanted-face list, below the {FACE_WL_MATCH} "
+                message=(f"{source_phrase} looks similar to {name!r} on "
+                         f"the {listed} wanted-face list, below the {FACE_WL_MATCH} "
                          f"match threshold. Manual review required."),
                 plain=(f"The face in {_plain_sources(labels)} looks similar to "
                        f"{name} on the wanted list, but not close enough to be "
