@@ -53,15 +53,24 @@ def _safe_ext(filename: str) -> str:
 
 
 class UploadTooLarge(Exception):
-    def __init__(self, field: str):
+    def __init__(self, field: str, message: str):
         self.field = field
+        self.message = message
 
 
-def _save_upload(upload: UploadFile | None, field: str) -> str | None:
-    """Stream an upload to disk under a random name. Raises UploadTooLarge over
-    config.MAX_UPLOAD_BYTES, deleting the partial file first."""
+def _save_upload(upload: UploadFile | None, field: str, limit: int = None,
+                  budget: dict | None = None) -> str | None:
+    """Stream an upload to disk under a random name.
+
+    Raises UploadTooLarge, deleting the partial file first, over either this
+    file's own `limit` (config.MAX_UPLOAD_BYTES by default) or the whole
+    request's shared `budget` (checkpoint-4 R5) - a dict {"used": int, "max":
+    int} the caller passes in and this function updates across every file in
+    one request.
+    """
     if upload is None or not upload.filename:
         return None
+    limit = config.MAX_UPLOAD_BYTES if limit is None else limit
     ext = _safe_ext(upload.filename)
     dest = os.path.join(config.UPLOAD_DIR, f"{uuid.uuid4().hex}{ext}")
     total = 0
@@ -71,10 +80,18 @@ def _save_upload(upload: UploadFile | None, field: str) -> str | None:
             if not chunk:
                 break
             total += len(chunk)
-            if total > config.MAX_UPLOAD_BYTES:
+            if budget is not None:
+                budget["used"] += len(chunk)
+            if total > limit:
                 fh.close()
                 os.remove(dest)
-                raise UploadTooLarge(field)
+                raise UploadTooLarge(field, f"{field} exceeds the "
+                                     f"{limit // (1024 * 1024)} MB upload limit")
+            if budget is not None and budget["used"] > budget["max"]:
+                fh.close()
+                os.remove(dest)
+                raise UploadTooLarge(field, f"total upload size exceeds the "
+                                     f"{budget['max'] // (1024 * 1024)} MB request limit")
             fh.write(chunk)
     return dest
 
@@ -104,23 +121,33 @@ def api_screen(
     # and /evidence stay responsive while a screening is in progress.
     doc_path = visa_path = selfie_path = None
     frame_paths: list[str] = []
+    # checkpoint-4 R5: one shared budget across every file in the request, on
+    # top of each file's own cap; R6: an identity image must never survive on
+    # disk after ANY failure in this block, not only an over-size one.
+    budget = {"used": 0, "max": config.MAX_TOTAL_UPLOAD_BYTES}
     try:
-        doc_path = _save_upload(document, "document")
-        visa_path = _save_upload(visa, "visa")
-        selfie_path = _save_upload(selfie, "selfie")
+        doc_path = _save_upload(document, "document", budget=budget)
+        visa_path = _save_upload(visa, "visa", budget=budget)
+        selfie_path = _save_upload(selfie, "selfie", budget=budget)
         # Liveness challenge frames. Anything past the cap is dropped unread, so
         # a scripted flood cannot hold the screening lock open.
         for frame in (selfie_frames or [])[:config.MAX_LIVENESS_FRAMES]:
-            saved = _save_upload(frame, "selfie_frames")
+            saved = _save_upload(frame, "selfie_frames",
+                                  limit=config.MAX_FRAME_UPLOAD_BYTES, budget=budget)
             if saved:
                 frame_paths.append(saved)
     except UploadTooLarge as e:
         # The failed field's own partial file is already removed by _save_upload;
         # clean up anything saved earlier in this same request.
         _cleanup(doc_path, visa_path, selfie_path, *frame_paths)
+        return JSONResponse(status_code=413, content={"error": e.message})
+    except Exception as e:
+        # Any other failure while saving (disk full, a malformed multipart
+        # part, ...) must still leave nothing behind (checkpoint-4 R6).
+        _cleanup(doc_path, visa_path, selfie_path, *frame_paths)
         return JSONResponse(
-            status_code=413,
-            content={"error": f"{e.field} exceeds the 15 MB upload limit"},
+            status_code=500,
+            content={"error": f"upload failed: {type(e).__name__}: {e}"},
         )
 
     try:

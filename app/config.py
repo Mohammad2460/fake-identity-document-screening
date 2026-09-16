@@ -28,6 +28,12 @@ UPLOAD_DIR = "data/uploads"
 EVIDENCE_DIR = "data/evidence"
 DB_PATH = "cases.db"
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+# checkpoint-4 R5: MAX_UPLOAD_BYTES caps each of document/visa/selfie alone, but
+# nothing capped the WHOLE request (three big files plus a burst of liveness
+# frames could still add up). A smaller per-frame cap too, since a frame is a
+# single webcam snapshot, not a full-page scan.
+MAX_TOTAL_UPLOAD_BYTES = 40 * 1024 * 1024
+MAX_FRAME_UPLOAD_BYTES = 2 * 1024 * 1024
 # Challenge frames per screening. The client sends ~8; anything past this
 # is dropped unread so a scripted flood cannot stall the screening lock.
 MAX_LIVENESS_FRAMES = 12

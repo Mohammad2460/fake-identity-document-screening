@@ -247,11 +247,54 @@ def test_screen_accepts_repeated_selfie_frames(client):
 
 
 def test_selfie_frames_are_size_capped_like_every_other_upload(client, monkeypatch):
+    # checkpoint-4 R5: a frame is a single webcam snapshot, so it has its own
+    # smaller cap, separate from MAX_UPLOAD_BYTES.
     from app import config
-    monkeypatch.setattr(config, "MAX_UPLOAD_BYTES", 1024)
+    monkeypatch.setattr(config, "MAX_FRAME_UPLOAD_BYTES", 1024)
     files = [("selfie_frames", ("f0.jpg", io.BytesIO(b"x" * 4096), "image/jpeg"))]
     r = client.post("/api/screen", data={"full_name": "Big Frame"}, files=files)
     assert r.status_code == 413
+    assert os.listdir(config.UPLOAD_DIR) == []
+
+
+def test_aggregate_upload_budget_across_the_whole_request(client, monkeypatch):
+    # checkpoint-4 R5: each file can individually be within its own cap, but
+    # the sum across the request must still be bounded.
+    from app import config
+    monkeypatch.setattr(config, "MAX_TOTAL_UPLOAD_BYTES", 5000)
+    files = [
+        ("document", ("doc.jpg", io.BytesIO(b"x" * 3000), "image/jpeg")),
+        ("visa", ("visa.jpg", io.BytesIO(b"y" * 3000), "image/jpeg")),
+    ]
+    r = client.post("/api/screen", data={"full_name": "Too Much"}, files=files)
+    assert r.status_code == 413
+    assert "total upload size" in r.json()["error"]
+    assert os.listdir(config.UPLOAD_DIR) == []
+
+
+def test_a_non_size_failure_mid_save_still_cleans_up_everything(client, monkeypatch):
+    # checkpoint-4 R6: only UploadTooLarge was caught around the save block;
+    # any other failure (disk full, a broken multipart part, ...) left
+    # earlier-saved identity images on disk. Force the visa save to blow up
+    # after the document was already written, and confirm nothing survives.
+    from app import config, main
+
+    real_save = main._save_upload
+    calls = {"n": 0}
+
+    def flaky(upload, field, limit=None, budget=None):
+        calls["n"] += 1
+        if field == "visa":
+            raise RuntimeError("disk exploded")
+        return real_save(upload, field, limit=limit, budget=budget)
+
+    monkeypatch.setattr(main, "_save_upload", flaky)
+    files = [
+        ("document", ("doc.jpg", _jpeg(), "image/jpeg")),
+        ("visa", ("visa.jpg", _jpeg(), "image/jpeg")),
+    ]
+    r = client.post("/api/screen", data={"full_name": "Flaky Save"}, files=files)
+    assert r.status_code == 500
     assert os.listdir(config.UPLOAD_DIR) == []
 
 
