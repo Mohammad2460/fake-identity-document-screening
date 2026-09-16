@@ -13,3 +13,5 @@ models/*.onnx
 pip_install.log
 .superpowers/
 data/demo/
+data/demo_*/
+data/watchlist.local.csv

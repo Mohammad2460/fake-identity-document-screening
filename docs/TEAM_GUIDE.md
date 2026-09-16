@@ -95,7 +95,9 @@ You make the slides and speak on stage. **This is one of the highest-scoring job
   3. **The four forgeries** — photo, name, DOB, visa stamp
   4. **Our idea** — not just *fake*, but **which field** was changed, with a red box
   5. **How it works** — diagram from the Design person
-  6. **Live demo** (the Lead runs it while you talk)
+  6. **Live demo** (the Lead runs it while you talk) — include the **live selfie** moment:
+     the traveller's own face captured on the webcam, matched to the passport photo, plus
+     the **liveness check** (turn your head) catching a printed photo held up to the camera
   7. **Why you can trust it** — every decision explained; works offline; no real personal data
   8. **Limitations** — be honest (see Role 3's list)
   9. **Future scope** — trained AI model, liveness check, connecting to immigration systems
@@ -110,6 +112,12 @@ You make the slides and speak on stage. **This is one of the highest-scoring job
 - Show the **red box picture** as big as possible. It is our best moment.
 - Say "the system *recommends* review" — never "the system *proves* this person is a criminal".
 - Speak slowly. Pause after the red box appears. Let the judges look.
+- For the **live selfie**: click "Use camera" beside the selfie box, then "Capture". The
+  webcam picture is compared to the passport photo, live, in front of the judges.
+- For **liveness**: click "Check liveness" and turn your head when asked. Then show it
+  failing on a *printed photo* held up to the camera — that's the punchline: a flat photo
+  has no depth, so the nose doesn't move sideways the way a real head's does.
+- See `docs/DEMO_SCRIPT.md` for the exact click-by-click order and timing.
 
 ---
 
@@ -149,6 +157,12 @@ Yes. The tamper check can wrongly flag very sharp text or images that were never
 
 **"Why didn't you train your own deep-learning model?"**
 In 36 hours there is no ethical, labelled dataset of forged Indian passports to train on, and an unexplainable model is hard for an officer to trust. Training one on the SIDTD dataset is our clear next step.
+
+**"How does the live selfie check work?"**
+The traveller looks into the laptop's own webcam, we capture a picture, and we compare it
+to the photo printed in the passport using a face-matching AI model. If they match closely
+enough, the system says so; if a different person is standing there, or the passport photo
+was swapped for someone else's, it flags a mismatch and the case is rejected.
 
 **"What stops me holding up a photo of someone else to the camera?"**
 We ask the traveller to turn their head, and we watch the nose. On a real head the nose sticks out in front of the eyes, so turning it moves the nose sideways away from the middle of the eyes. A flat photo has no nose sticking out, so nothing moves — and we say so, with the number we measured. Be honest about the limit: *"This is a challenge, not full anti-spoofing. A video replay of the right person turning their head would still get through. A dedicated anti-spoofing model is our next step."*
@@ -277,6 +291,12 @@ You make things look clear, and you make sure the demo survives if something goe
 - [ ] **Wi-Fi off** (proves it works offline)
 - [ ] Phone notifications off
 - [ ] Every member can say the 30-second pitch
+- [ ] Camera permission for the browser already granted (open it and click "Use camera"
+      once beforehand, so the permission popup never happens live on stage)
+- [ ] A printed photo (or a phone showing a photo) on hand for the liveness fail demo
+- [ ] The demo specimen passport built (`data/demo/demo_passport.jpg`) with a **consenting**
+      teammate's photo, and the details from `data/demo/demo_claimed.json` written down or
+      memorised for typing into the form
 
 ---
 

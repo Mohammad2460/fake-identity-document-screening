@@ -1,13 +1,73 @@
 # SIH26188 — AI-Based Fake Identity & Document Screening System
 
-Explainable passport and visa screening. Start with `CLAUDE.md` and `docs/PROGRESS.md`.
+Smart India Hackathon · Ministry of Home Affairs. An explainable AI system that verifies
+passports and visas, detects forgery and tampering, matches the document holder's face,
+and produces an evidence-backed risk score in seconds — fully offline.
+
+Start with `CLAUDE.md` and `docs/PROGRESS.md` for the full project context.
+
+## Quick start
 
 ```bash
-./run.sh                                      # cold start
-./.venv/bin/pytest -q                         # tests
-./.venv/bin/python -m scripts.make_samples    # synthetic demo documents
-./.venv/bin/python -m scripts.check_samples   # verdict per demo case
+./run.sh                                      # cold start: venv, deps, models, samples, server
 ```
+
+`run.sh` is idempotent: it creates `.venv` if missing, installs `requirements.txt`,
+downloads the face ONNX models and the SFHQ demo faces once (needs network the first time
+only — everything after is offline), generates the 7 scripted sample documents if absent,
+then serves the app at `http://localhost:8000`. Re-running it is safe and fast.
+
+```bash
+./.venv/bin/pytest -v                         # full test suite
+./.venv/bin/python -m scripts.make_samples    # (re)generate the synthetic demo documents
+./.venv/bin/python -m scripts.check_samples   # print verdict + score per demo case
+./.venv/bin/uvicorn app.main:app --reload --port 8000   # dev server, no cold-start steps
+```
+
+See `docs/DEMO_SCRIPT.md` for the stage runbook and `docs/JUDGE_QA.md` for prepared
+technical answers.
+
+## Architecture
+
+One Python process. FastAPI serves both the JSON API and the static frontend — no Node, no
+bundler, no CORS. Each detection concern is an isolated module in `app/engines/`, taking an
+input bundle and returning a `list[Signal]`. `app/pipeline.py` fans out to every engine
+inside a per-engine `try/except`, so one engine raising becomes a low-severity
+`ENGINE_ERROR` signal instead of a failed request. `app/scoring.py` folds every signal into
+a 0-100 risk score and a `CLEAR` (0-29) / `REVIEW` (30-64) / `REJECT` (65-100) band. Storage
+is three things, only one a database: sample images are files on disk, the watchlist is one
+CSV (`data/watchlist.csv`), and `cases.db` is SQLite holding one row per screening — the
+case history that makes cross-document and duplicate-submission detection possible.
+
+## The engines
+
+| Engine | Catches | Key signal codes |
+|---|---|---|
+| `mrz` | Altered passport fields — ICAO 9303 check-digit arithmetic, self-proving | `MRZ_DOCNUM_CHECKSUM_FAIL`, `MRZ_COMPOSITE_CHECKSUM_FAIL`, `MRZ_NAME_MISMATCH` |
+| `fieldforensics` ⭐ | **Which field** was tampered — per-region ELA on OCR text boxes, the portrait region, and visa stamp regions | `FF_FIELD_TAMPERED`, `FF_PHOTO_TAMPERED`, `FF_STAMP_TAMPERED` |
+| `ocr` | Claimed name/DOB/number not printed on the uploaded document; supplies the bounding boxes `fieldforensics` needs | — |
+| `face` | Missing/duplicate portrait; live selfie-to-portrait match | face cosine similarity vs. `SAME_PERSON`/`DEFINITE_MISMATCH` |
+| `liveness` | Printed photo or screen held up to the camera instead of a live head | head-turn yaw-proxy delta vs. `YAW_DELTA_THRESHOLD` |
+| `tamper` | Whole-image splicing (ELA), cloning (ORB copy-move), noise inconsistency | `TAMPER_ELA_ANOMALY`, `TAMPER_COPY_MOVE`, `TAMPER_NOISE_INCONSISTENT` |
+| `metadata` | EXIF/PDF provenance — editor tags, missing camera data | `META_NO_CAMERA_EXIF` |
+| `crossdoc` | Passport vs. visa vs. prior submissions — same person, contradictory details | `XDOC_DOB_MISMATCH`, `XDOC_NAME_MISMATCH`, `XDOC_PASSPORT_NO_MISMATCH` |
+| `watchlist` | Sanctions/PEP name matches, fuzzy so transliteration doesn't evade | `WL_MATCH`, `WL_NEAR_MATCH` |
+| `velocity` | Same document under different names, duplicates, bulk bursts | — |
+
+Cut an engine instantly by setting its weight to `0.0` in `app/config.py`'s
+`ENGINE_WEIGHTS`. Add one by writing a file in `app/engines/` plus one registry line.
+
+## Synthetic data only — no real identity documents
+
+Every image this repo ships or generates is synthetic. `scripts/make_samples.py` renders
+the 7 scripted demo documents from scratch with invented names, numbers and computed (not
+copied) MRZ check digits. `data/faces/` holds StyleGAN-generated SFHQ crops — faces of
+people who do not exist (MIT licence). The only real photograph ever used is a
+**consenting teammate's own live selfie**, captured for the on-stage demo via
+`scripts/make_demo_passport.py`; it is written to `data/demo/`, which is gitignored, and is
+deleted after the hackathon. Accuracy claims, where made, are measured only against our own
+synthetic corpus or the public SIDTD/MIDV-2020 research datasets — never invented, and
+never against real documents.
 
 ## Calibration
 
