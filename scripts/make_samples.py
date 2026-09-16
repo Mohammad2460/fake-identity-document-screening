@@ -64,11 +64,16 @@ FACE_A = "sfhq_01.jpg"   # the genuine holder, Anna Maria Eriksson
 FACE_B = "sfhq_02.jpg"   # a different (also non-existent) person - the substituted photo
 PORTRAIT_BOX = (50, 120, 250, 380)   # x0, y0, x1, y1
 
+def face_path(face_file: str) -> str:
+    """A bare file name lives in data/faces; anything else is used as given, so
+    scripts.make_demo_passport can pass a photo from outside the repo."""
+    return face_file if os.path.sep in face_file else os.path.join(FACES_DIR, face_file)
+
 def _portrait_image(face_file: str) -> Image.Image:
     """The face cropped to the portrait box's aspect, resized, slightly desaturated."""
     x0, y0, x1, y1 = PORTRAIT_BOX
     bw, bh = x1 - x0, y1 - y0
-    with Image.open(os.path.join(FACES_DIR, face_file)) as im:
+    with Image.open(face_path(face_file)) as im:
         src = im.convert("RGB")
     sw, sh = src.size
     if sw / sh > bw / bh:             # too wide: trim the sides
@@ -84,13 +89,13 @@ def _portrait_image(face_file: str) -> Image.Image:
 def paste_portrait(img: Image.Image, face_file: str = FACE_A) -> Image.Image:
     """Put a photograph into the portrait box - as issued, or as a forger would.
     Without data/faces (fetch not run) the box stays a flat grey placeholder."""
-    if not os.path.exists(os.path.join(FACES_DIR, face_file)):
+    if not os.path.exists(face_path(face_file)):
         ImageDraw.Draw(img).rectangle(PORTRAIT_BOX, fill=(205, 205, 200))
         return img
     img.paste(_portrait_image(face_file), PORTRAIT_BOX[:2])
     return img
 
-def draw_passport(p: dict, mrz_override=None) -> Image.Image:
+def draw_passport(p: dict, mrz_override=None, face_file: str = FACE_A) -> Image.Image:
     img = Image.new("RGB", (W, H), (236, 234, 224))
     d = ImageDraw.Draw(img)
     d.rectangle([0, 0, W, 80], fill=(22, 52, 96))
@@ -102,7 +107,7 @@ def draw_passport(p: dict, mrz_override=None) -> Image.Image:
         y = FIELD_Y0 + i * FIELD_STEP
         d.text((FIELD_X, y), label.upper(), font=_font(14), fill=(110, 110, 110))
         d.text((FIELD_X, y + 18), str(value), font=_font(26), fill=(15, 15, 15))
-    paste_portrait(img)
+    paste_portrait(img, face_file)
     l1, l2 = mrz_override or build_mrz("P", p["surname"], p["given"], p["doc_no"],
                                        p["nat"], p["dob"], p["sex"], p["expiry"])
     d.rectangle([0, H - 110, W, H], fill=(250, 250, 246))

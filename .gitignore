@@ -12,3 +12,4 @@ data/samples/*
 models/*.onnx
 pip_install.log
 .superpowers/
+data/demo/
