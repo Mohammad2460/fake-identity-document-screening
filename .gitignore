@@ -17,3 +17,4 @@ data/demo_*/
 data/watchlist.local.csv
 data/face_watchlist.local.csv
 .DS_Store
+data/faces/.sfhq_*/

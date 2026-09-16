@@ -93,10 +93,23 @@ def _download(url: str, dest: str) -> None:
         fh.write(resp.read())
 
 
+def _workdir() -> str:
+    """A scratch directory on the same filesystem as the crops.
+
+    os.replace cannot move a file between drives. The system temp directory is
+    routinely on a different one - on Windows, temp on C: while the checkout is
+    on D: - which raised "WinError 17: The system cannot move the file to a
+    different disk drive". Keeping the scratch directory inside the destination
+    keeps every rename atomic and on one filesystem. The leading dot keeps it
+    clear of the sfhq_*.jpg glob.
+    """
+    os.makedirs(OUT, exist_ok=True)
+    return tempfile.mkdtemp(prefix=".sfhq_", dir=OUT)
+
+
 def main() -> None:
     from app.engines import face
-    os.makedirs(OUT, exist_ok=True)
-    work = tempfile.mkdtemp(prefix="sfhq_")
+    work = _workdir()
     try:
         grid_path = os.path.join(work, "grid.jpg")
         part = grid_path + ".part"

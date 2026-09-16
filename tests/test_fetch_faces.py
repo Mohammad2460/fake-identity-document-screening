@@ -25,3 +25,29 @@ def test_grid_cells_finds_every_image_cell_and_skips_title_strips():
     assert len(cells) == 8
     for got, want in zip(cells, boxes):
         assert all(abs(g - w) <= 3 for g, w in zip(got, want)), (got, want)
+
+
+def test_the_work_directory_sits_beside_its_destination():
+    """os.replace cannot move a file between drives. On Windows the system temp
+    directory is routinely on C: while the checkout is on D:, which made
+    scripts.fetch_faces fail with WinError 17 on a teammate's machine. Keeping
+    the scratch directory inside the destination keeps the rename atomic and on
+    one filesystem."""
+    import os
+    from scripts import fetch_faces
+    work = fetch_faces._workdir()
+    try:
+        assert os.path.dirname(os.path.abspath(work)) == os.path.abspath(fetch_faces.OUT)
+    finally:
+        os.rmdir(work)
+
+
+def test_a_leftover_work_directory_is_not_mistaken_for_a_face():
+    """It lives inside data/faces, so it must not match the crop glob."""
+    import glob, os
+    from scripts import fetch_faces
+    work = fetch_faces._workdir()
+    try:
+        assert work not in glob.glob(os.path.join(fetch_faces.OUT, "sfhq_*.jpg"))
+    finally:
+        os.rmdir(work)

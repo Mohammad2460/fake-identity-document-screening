@@ -178,7 +178,10 @@ def test_gallery_faces_are_not_reused_anywhere_else_in_the_repo():
     """A crop used as a demo holder's portrait must never also sit in the
     gallery: that person's own genuine passport would then self-match and
     REJECT. This happened once during task 23."""
-    gallery_files = {row["file"] for row in facewatch.load_gallery()}
+    # The COMMITTED gallery only. The gitignored overlay points at a consenting
+    # stand-in's own photo, which is meant to be referenced from elsewhere.
+    with open(facewatch.GALLERY_PATH, newline="", encoding="utf-8") as fh:
+        gallery_files = {row["file"] for row in csv.DictReader(fh)}
     assert gallery_files, "the committed gallery is empty"
     import subprocess
     for path in sorted(gallery_files):
