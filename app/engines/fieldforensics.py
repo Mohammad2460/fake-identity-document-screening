@@ -23,7 +23,14 @@ STAMP_LETTERING_MIN = 0.5     # a text box this far inside a stamp is the stamp'
 # fields: dense monospace glyphs on their own strip. On the genuine sample their ELA
 # was 1.13-1.21 vs a data-field median of 0.60 (z 7-8), so they are compared only
 # with each other (task-16b item 4). Their integrity is owned by the MRZ check digits.
+# checkpoint-4 F2/R8: OCR sometimes splits one MRZ line into fragments ("<<<04").
+# A fragment no longer matches the full-line shape, but it is still MRZ content
+# (dominated by filler) or sits in the MRZ band at the bottom of the page -
+# either test alone is enough to route it away from being judged as a data field.
 _MRZ_TEXT = re.compile(r"^[A-Z0-9<]{20,}$")
+_MRZ_CHARSET = re.compile(r"^[A-Z0-9<]+$")
+MRZ_FILLER_FRACTION = 0.3   # a box this '<'-dominated is an MRZ fragment, not a data field
+MRZ_BAND_FRACTION = 0.2     # bottom fraction of the page the MRZ occupies
 # Portrait (task-16c). A detected face box covers only the face; the photograph around
 # it (hair, backdrop) is often saturated enough to look like a "stamp" blob. Stamp
 # candidates mostly inside this zone are part of the photograph.
@@ -45,8 +52,40 @@ def portrait_zone(face_box: tuple) -> tuple[int, int, int, int]:
     return int(cx - zw / 2), int(cy - zh / 2), int(zw), int(zh)
 
 def _is_mrz_text(text: str) -> bool:
+    """Whole-line MRZ shape (existing) OR a fragment dominated by '<' filler."""
     t = (text or "").upper().replace(" ", "")
-    return "<" in t and bool(_MRZ_TEXT.match(t))
+    if not t or "<" not in t:
+        return False
+    if _MRZ_TEXT.match(t):
+        return True
+    if not _MRZ_CHARSET.match(t):
+        return False   # ordinary text that happens to contain '<' is not MRZ
+    return (t.count("<") / len(t)) >= MRZ_FILLER_FRACTION
+
+def _in_band(box: tuple, img_h: int) -> bool:
+    """True if a box's vertical center sits in the bottom MRZ_BAND_FRACTION of the page."""
+    if img_h <= 0:
+        return False
+    _, y, _, h = box
+    return (y + h / 2) >= img_h * (1 - MRZ_BAND_FRACTION)
+
+def reclassify_band_fragments(regions: list[dict], img_h: int) -> None:
+    """A fragment too short to score >=MRZ_FILLER_FRACTION '<' is still an MRZ
+    fragment when it sits in the bottom band AND lines up with an MRZ box
+    already identified by content - never reclassify a lone bottom-band box
+    with no such anchor, or an unrelated field near the bottom gets stolen."""
+    anchors = [r["box"] for r in regions if r["kind"] == "mrz"]
+    if not anchors or img_h <= 0:
+        return
+    lo = min(b[1] for b in anchors)
+    hi = max(b[1] + b[3] for b in anchors)
+    for r in regions:
+        if r["kind"] != "text":
+            continue
+        x, y, w, h = r["box"]
+        cy = y + h / 2
+        if _in_band(r["box"], img_h) and (lo - h) <= cy <= (hi + h):
+            r["kind"] = "mrz"
 
 def _overlap_fraction(stamp: tuple, other: tuple) -> float:
     """Fraction of the stamp box's own area covered by the other box."""
@@ -137,6 +176,12 @@ def run(path: str, ocr_boxes: list[dict],
         return ([Signal(code="FF_UNREADABLE", engine="fieldforensics", severity="low",
                         message="No document image available for field-level analysis.")], [])
 
+    try:
+        with Image.open(path) as im:
+            img_h = ImageOps.exif_transpose(im).size[1]
+    except Exception:
+        img_h = 0
+
     regions: list[dict] = []
     for b in ocr_boxes or []:
         try:
@@ -149,6 +194,7 @@ def run(path: str, ocr_boxes: list[dict],
             regions.append({"box": (x, y, w, h), "label": label,
                             "kind": "mrz" if _is_mrz_text(text) else "text",
                             "suspect": False, "score": 0.0})
+    reclassify_band_fragments(regions, img_h)
     if portrait_box and portrait_box[2] * portrait_box[3] >= MIN_AREA:
         regions.append({"box": tuple(portrait_box), "label": "PHOTOGRAPH",
                         "kind": "portrait", "suspect": False, "score": 0.0})
@@ -210,11 +256,14 @@ def run(path: str, ocr_boxes: list[dict],
     # MRZ lines form their own group (see _MRZ_TEXT).
     groups: dict[str, list[int]] = {}
     for i, bg in enumerate(backgrounds):
-        if regions[i]["kind"] == "portrait":
-            continue   # judged separately below: a photo is not text
+        if regions[i]["kind"] in ("portrait", "mrz"):
+            # A photo is not text (judged separately below); an MRZ region's
+            # integrity is owned by the MRZ check digits, not field-level ELA
+            # (checkpoint-4 R8) - so it is never grouped, judged, or reported
+            # as a skipped group, the same as a portrait.
+            continue
         shade = "dark" if bg < BACKGROUND_SPLIT else "light"
-        name = f"MRZ {shade}" if regions[i]["kind"] == "mrz" else shade
-        groups.setdefault(name, []).append(i)
+        groups.setdefault(shade, []).append(i)
 
     group_median: dict[int, float] = {}
     bad: list[int] = []

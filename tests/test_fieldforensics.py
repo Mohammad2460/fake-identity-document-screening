@@ -235,6 +235,49 @@ def test_mrz_lines_are_their_own_peer_group(tmp_path):
     assert len([r for r in regions if r["kind"] == "mrz"]) == 2
 
 
+# --- checkpoint-4 F2/R8: a stray MRZ fragment must not be judged as a field --
+def test_content_classifies_a_short_mrz_fragment():
+    assert ff._is_mrz_text("<<<04")            # >=30% filler, all-MRZ charset
+    assert not ff._is_mrz_text("STATE<OF")      # ordinary text with one filler
+
+
+def test_band_fragment_next_to_a_real_mrz_line_is_reclassified():
+    regions = [
+        {"box": (10, 850, 400, 20), "kind": "mrz", "label": "L1", "suspect": False, "score": 0.0},
+        {"box": (420, 852, 40, 18), "kind": "text", "label": "<<<04",
+         "suspect": False, "score": 0.0},
+    ]
+    ff.reclassify_band_fragments(regions, img_h=1000)
+    assert regions[1]["kind"] == "mrz"
+
+
+def test_lone_bottom_box_with_no_mrz_anchor_is_left_as_text():
+    regions = [{"box": (10, 950, 200, 30), "kind": "text", "label": "ISSUED AT",
+                "suspect": False, "score": 0.0}]
+    ff.reclassify_band_fragments(regions, img_h=1000)
+    assert regions[0]["kind"] == "text"
+
+
+def test_mrz_fragment_never_flagged_or_counted_as_skipped(tmp_path):
+    p = str(tmp_path / "passport.jpg")
+    ms.save_issued(ms.draw_passport(ms.BASE), p)
+    from app.engines import ocr
+    _, _, boxes = ocr.run(p, {})
+    # Inject a fragment box, like OCR splitting one MRZ line, positioned in the
+    # MRZ band next to the real lines so the alignment test picks it up.
+    mrz_boxes = [b for b in boxes if "<" in b["text"]]
+    assert mrz_boxes
+    anchor = mrz_boxes[0]["box"]
+    frag_box = (anchor[0] + anchor[2] + 5, anchor[1], 30, anchor[3])
+    boxes = boxes + [{"text": "<<<04", "confidence": 0.9, "box": frag_box}]
+    signals, regions = ff.run(p, boxes)
+    frag = next(r for r in regions if r["label"] == "<<<04")
+    assert frag["kind"] == "mrz"
+    assert not frag["suspect"]
+    ok = next(s for s in signals if s.code == "FF_ALL_FIELDS_CONSISTENT")
+    assert "MRZ" not in ok.message
+
+
 def test_sample_dob_retyped_flags_exactly_the_dob_value(tmp_path):
     signals, flagged, _ = _ff(_retyped(tmp_path, "Date of birth", "12/08/1994"))
     assert [r["label"] for r in flagged] == ["12/08/1994"]
