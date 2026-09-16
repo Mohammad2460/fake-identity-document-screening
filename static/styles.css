@@ -463,3 +463,19 @@ input[type="text"]:focus-visible, input[type="tel"]:focus-visible, input[type="e
 }
 .camera-actions .btn-primary { width: auto; height: 48px; margin-top: 0; padding: 0 var(--s-6); }
 .camera-actions .btn-secondary { margin-top: 0; }
+
+/* Liveness challenge: the prompt the traveller is meant to read and obey, so it
+   is the loudest thing in the camera stage while a challenge is running. */
+.camera-prompt {
+  margin-top: var(--s-3);
+  padding: var(--s-3);
+  background: var(--navy);
+  color: var(--surface);
+  border-radius: var(--r-sm);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
+}
+.camera-actions .camera-challenge { margin-top: 0; }
+.camera-actions button[disabled] { opacity: 0.5; cursor: not-allowed; }

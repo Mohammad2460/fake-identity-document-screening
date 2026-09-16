@@ -50,6 +50,7 @@ const ENGINE_NAMES = {
   watchlist: "Watchlist",
   velocity: "Submission history",
   identity: "Identity details",
+  liveness: "Liveness",
 };
 
 // Signal codes meaning "this region of the document was altered".
@@ -183,13 +184,59 @@ const CAMERA_ERRORS = {
 };
 const CAMERA_ERROR_FALLBACK = "The camera could not be started. Choose a photo file instead.";
 
+// --- Liveness challenge ----------------------------------------------------
+// A printed photograph has no nose depth, so turning it moves nothing. We ask
+// the traveller to turn their head and send the frames with the normal submit;
+// app/engines/liveness.py measures how far the nose moved off the eye midpoint.
+// Frames are captured from the SAME stream and the SAME teardown rules apply.
+const LIVENESS_FRAMES = 8;          // must be <= config.MAX_LIVENESS_FRAMES
+const LIVENESS_FRAME_MS = 380;      // ~3 s of turning
+const LIVENESS_SETTLE_MS = 1200;    // "look straight at the camera" first
+const LIVENESS_DIRECTION = "left";  // the traveller's own left
+
 let cameraStream = null;
+let livenessFrames = [];
+let livenessTimer = null;
+let livenessAborted = false;
 
 /** The one place a stream is released. Safe to call when nothing is running. */
 function stopCameraStream() {
   if (!cameraStream) return;
   cameraStream.getTracks().forEach((track) => track.stop());
   cameraStream = null;
+}
+
+/** Drop any frames already captured — the selfie they belong to is gone. */
+function clearLivenessFrames() {
+  livenessFrames = [];
+}
+
+/** Stop a challenge in flight: no pending timer may survive a teardown. */
+function cancelLivenessChallenge() {
+  livenessAborted = true;
+  if (livenessTimer !== null) {
+    clearTimeout(livenessTimer);
+    livenessTimer = null;
+  }
+}
+
+function livenessWait(ms) {
+  return new Promise((resolve) => {
+    livenessTimer = setTimeout(() => {
+      livenessTimer = null;
+      resolve();
+    }, ms);
+  });
+}
+
+/** Attach the captured challenge frames to a submission. No frames, no field. */
+function attachLivenessFrames(formData) {
+  if (!livenessFrames.length) return formData;
+  formData.set("liveness_direction", LIVENESS_DIRECTION);
+  livenessFrames.forEach((blob, i) => {
+    formData.append("selfie_frames", blob, "frame" + i + ".jpg");
+  });
+  return formData;
 }
 
 function setupSelfieCamera() {
@@ -217,30 +264,49 @@ function setupSelfieCamera() {
   const retakeBtn = el("button", { type: "button", class: "btn-secondary camera-retake",
                                    text: "Retake" });
   retakeBtn.hidden = true;
-  const actions = el("div", { class: "camera-actions" }, [captureBtn, retakeBtn, cancelBtn]);
-  const stage = el("div", { class: "camera-stage" }, [video, canvas, actions]);
+  const challengeBtn = el("button", { type: "button", class: "btn-secondary camera-challenge",
+                                      text: "Check liveness" });
+  const prompt = el("p", { class: "camera-prompt", role: "status", "aria-live": "assertive" });
+  prompt.hidden = true;
+  const actions = el("div", { class: "camera-actions" },
+                     [captureBtn, challengeBtn, retakeBtn, cancelBtn]);
+  const stage = el("div", { class: "camera-stage" }, [video, canvas, prompt, actions]);
   stage.hidden = true;
 
   const block = el("div", { class: "camera" }, [
     openBtn,
+    status,
     stage,
     el("p", { class: "camera-note t-label",
               text: "The camera runs on this device. Nothing is sent until you screen the traveller." }),
   ]);
   wrapper.insertBefore(block, $("e-selfie"));
 
+  function setChallengeRunning(running) {
+    captureBtn.disabled = running;
+    challengeBtn.disabled = running;
+    retakeBtn.disabled = running;
+    prompt.hidden = !running;
+    if (!running) prompt.textContent = "";
+  }
+
   function closeStage() {
+    cancelLivenessChallenge();
+    setChallengeRunning(false);
     stage.hidden = true;
     openBtn.hidden = false;
     video.hidden = false;
     canvas.hidden = true;
     captureBtn.hidden = false;
+    challengeBtn.hidden = false;
     retakeBtn.hidden = true;
     video.srcObject = null;
   }
 
   async function openCamera() {
     setFieldError("selfie", "");
+    cancelLivenessChallenge();
+    clearLivenessFrames();
     stopCameraStream();   // never hold two streams at once
     try {
       cameraStream = await navigator.mediaDevices.getUserMedia({
@@ -264,24 +330,24 @@ function setupSelfieCamera() {
     video.hidden = false;
     canvas.hidden = true;
     captureBtn.hidden = false;
+    challengeBtn.hidden = false;
     retakeBtn.hidden = true;
-    status.textContent = "Camera on. Press Capture when the face is centred.";
+    setChallengeRunning(false);
+    status.textContent = "Camera on. Press Capture when the face is centred, "
+      + "or Check liveness to run the head-turn challenge.";
     captureBtn.focus();
   }
 
-  function capture() {
-    const width = video.videoWidth || 640;
-    const height = video.videoHeight || 480;
-    canvas.width = width;
-    canvas.height = height;
-    canvas.getContext("2d").drawImage(video, 0, 0, width, height);
-    // teardown(capture): the still is on the canvas; the camera is done.
-    stopCameraStream();
-    video.srcObject = null;
-    video.hidden = true;
-    canvas.hidden = false;
-    captureBtn.hidden = true;
-    retakeBtn.hidden = false;
+  /** Paint the current video frame onto a canvas at the camera's own size. */
+  function drawFrame(target) {
+    target.width = video.videoWidth || 640;
+    target.height = video.videoHeight || 480;
+    target.getContext("2d").drawImage(video, 0, 0, target.width, target.height);
+    return target;
+  }
+
+  /** Put the still on `canvas` into the existing selfie file input. */
+  function publishSelfie() {
     canvas.toBlob((blob) => {
       if (!blob) {
         setFieldError("selfie", CAMERA_ERROR_FALLBACK);
@@ -291,17 +357,79 @@ function setupSelfieCamera() {
       transfer.items.add(new File([blob], "selfie.jpg", { type: "image/jpeg" }));
       input.files = transfer.files;
       input.dispatchEvent(new Event("change", { bubbles: true }));
-      status.textContent = "Selfie captured. Retake it, or screen the traveller.";
     }, "image/jpeg", 0.92);
+  }
+
+  function showStill() {
+    video.srcObject = null;
+    video.hidden = true;
+    canvas.hidden = false;
+    captureBtn.hidden = true;
+    challengeBtn.hidden = true;
+    retakeBtn.hidden = false;
+  }
+
+  function capture() {
+    clearLivenessFrames();   // a plain still carries no challenge evidence
+    drawFrame(canvas);
+    // teardown(capture): the still is on the canvas; the camera is done.
+    stopCameraStream();
+    showStill();
+    publishSelfie();
+    status.textContent = "Selfie captured. Retake it, or screen the traveller.";
+    retakeBtn.focus();
+  }
+
+  const frameCanvas = document.createElement("canvas");
+
+  /** One challenge frame as a JPEG blob, off-screen so the preview is untouched. */
+  function grabFrame() {
+    return new Promise((resolve) => {
+      drawFrame(frameCanvas).toBlob(resolve, "image/jpeg", 0.85);
+    });
+  }
+
+  async function runChallenge() {
+    livenessAborted = false;
+    clearLivenessFrames();
+    setChallengeRunning(true);
+    status.textContent = "Liveness challenge running.";
+
+    prompt.textContent = "Look straight at the camera…";
+    await livenessWait(LIVENESS_SETTLE_MS);
+    if (livenessAborted || !cameraStream) return;
+
+    // The frontal frame is both the still selfie and the challenge baseline.
+    drawFrame(canvas);
+    publishSelfie();
+
+    prompt.textContent = "Now slowly turn your head to your LEFT.";
+    for (let i = 0; i < LIVENESS_FRAMES; i += 1) {
+      const blob = await grabFrame();
+      if (livenessAborted || !cameraStream) return;
+      if (blob) livenessFrames.push(blob);
+      await livenessWait(LIVENESS_FRAME_MS);
+      if (livenessAborted || !cameraStream) return;
+    }
+
+    // teardown(challenge): every frame is captured; the camera is done.
+    stopCameraStream();
+    setChallengeRunning(false);
+    showStill();
+    status.textContent = "Liveness challenge recorded (" + livenessFrames.length
+      + " frames). Screen the traveller to see the result.";
     retakeBtn.focus();
   }
 
   openBtn.addEventListener("click", openCamera);
   captureBtn.addEventListener("click", capture);
+  challengeBtn.addEventListener("click", () => { runChallenge(); });
   retakeBtn.addEventListener("click", openCamera);
 
   cancelBtn.addEventListener("click", () => {
     // teardown(cancel): the officer backed out of the preview.
+    cancelLivenessChallenge();
+    clearLivenessFrames();
     stopCameraStream();
     closeStage();
     status.textContent = "Camera off.";
@@ -311,6 +439,8 @@ function setupSelfieCamera() {
   if (removeBtn) {
     removeBtn.addEventListener("click", () => {
       // teardown(remove): the selfie was removed, so the camera closes too.
+      cancelLivenessChallenge();
+      clearLivenessFrames();
       stopCameraStream();
       closeStage();
       status.textContent = "";
@@ -318,9 +448,14 @@ function setupSelfieCamera() {
   }
 
   // teardown(pagehide): tab closed, navigated away or backgrounded.
-  window.addEventListener("pagehide", () => stopCameraStream());
+  window.addEventListener("pagehide", () => {
+    cancelLivenessChallenge();
+    stopCameraStream();
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
+      cancelLivenessChallenge();
+      clearLivenessFrames();
       stopCameraStream();
       closeStage();
     }
@@ -340,7 +475,8 @@ let lastResult = null;     // the last verdict shown, restored after a 413
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  runScreening(new FormData(form));
+  // Challenge frames are not form inputs; they ride along on the same submit.
+  runScreening(attachLivenessFrames(new FormData(form)));
 });
 
 async function runScreening(formData) {

@@ -161,3 +161,68 @@ def test_css_styles_the_camera_ui():
     css = (STATIC / "styles.css").read_text(encoding="utf-8")
     for selector in (".camera-stage", ".camera-video", ".camera-actions"):
         assert selector in css, selector
+
+
+# --- T16e: liveness challenge ---------------------------------------------
+# Source-level guards again: the challenge must keep 16d's teardown discipline,
+# must not fire without the camera, and must never build HTML from strings.
+
+def test_liveness_button_exists_and_is_a_real_button():
+    js = _js()
+    assert '"Check liveness"' in js
+    assert re.search(r'el\("button",\s*\{[^}]*text:\s*"Check liveness"', js)
+
+
+def test_liveness_prompts_name_the_direction_asked_for():
+    js = _js()
+    assert "Look straight at the camera" in js
+    assert re.search(r"turn your head[^\"]*LEFT", js, re.I)
+
+
+def test_liveness_challenge_tears_down_the_camera():
+    js = _js()
+    at = js.find("// teardown(challenge)")
+    assert at != -1, "the challenge must be a tagged teardown path"
+    assert "stopCameraStream()" in js[at:at + 240]
+
+
+def test_cancelling_mid_challenge_clears_the_pending_timer():
+    js = _js()
+    assert "clearTimeout" in js
+    assert "cancelLivenessChallenge" in js
+
+
+def test_frames_are_sent_as_repeated_selfie_frames_with_the_direction():
+    js = _js()
+    assert '"selfie_frames"' in js
+    assert '"liveness_direction"' in js
+
+
+def test_frame_count_and_cap_match_the_server():
+    js = _js()
+    assert re.search(r"LIVENESS_FRAMES\s*=\s*(8|9|10)\b", js)
+    from app import config
+    count = int(re.search(r"LIVENESS_FRAMES\s*=\s*(\d+)", js).group(1))
+    assert count <= config.MAX_LIVENESS_FRAMES
+
+
+def test_frames_are_cleared_when_the_selfie_is_cleared():
+    js = _js()
+    assert "clearLivenessFrames" in js
+
+
+def test_camera_status_line_is_actually_in_the_page():
+    """T16d created the aria-live status paragraph but never inserted it, so
+    every prompt was invisible. The challenge depends on those prompts."""
+    js = _js()
+    assert re.search(r'el\("div",\s*\{\s*class:\s*"camera"\s*\}\s*,\s*\[\s*openBtn,\s*status', js)
+
+
+def test_liveness_engine_has_a_plain_english_name():
+    js = _js()
+    assert re.search(r'liveness:\s*"[^"]+"', js)
+
+
+def test_css_styles_the_liveness_prompt():
+    css = (STATIC / "styles.css").read_text(encoding="utf-8")
+    assert ".camera-prompt" in css
