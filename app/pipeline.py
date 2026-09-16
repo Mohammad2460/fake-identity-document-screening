@@ -42,7 +42,7 @@ def _mrz_fields(lines: list[str], label: str) -> dict | None:
     try:
         # Same normalisation mrz.run applies: case, spaces, dropped trailing fillers
         # and letter/digit look-alikes repaired by ICAO field type (task-16b item 2).
-        l1, l2 = mrz.normalise_td3(lines)[:2]
+        l1, l2 = mrz.normalise_td3(lines, is_visa=(label == "visa"))[:2]
         f = mrz.parse_td3(l1, l2)
     except Exception:
         return None

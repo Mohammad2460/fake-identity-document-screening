@@ -129,3 +129,47 @@ def test_ocr_read_genuine_mrz_passes_all_checks():
 def test_normalisation_does_not_hide_an_altered_document_number():
     bad = "L899902C36UT07408122F3012316<<<<<<<<<<<<<<06"
     assert "MRZ_DOCNUM_CHECKSUM_FAIL" in [s.code for s in mrz.run([OCR_L1, bad], {})]
+
+
+# --- checkpoint-4 F1: real specimen with a short name and a dropped MRZ tail ---
+SHORT_L1 = "P<UTOKHALID<<MOHAMMAD<<<<"
+SHORT_L2 = "U2938471<6UT09204155M3307319<<<<<<<<<<<<"   # 40 chars; expected 44
+
+
+def test_short_name_specimen_line1_pads_to_44():
+    l1, _ = mrz.normalise_td3([SHORT_L1, SHORT_L2])
+    assert len(l1) == 44 and l1.startswith("P<UTOKHALID<<MOHAMMAD")
+
+
+def test_short_line2_pads_personal_number_but_not_check_digits():
+    _, l2 = mrz.normalise_td3([SHORT_L1, SHORT_L2])
+    assert len(l2) == 42   # personal number padded; the 2 trailing check digits stay unread
+
+
+def test_genuine_specimen_with_dropped_mrz_tail_is_not_malformed_or_failed():
+    signals = mrz.run([SHORT_L1, SHORT_L2], {"full_name": "MOHAMMAD KHALID"})
+    codes = [s.code for s in signals]
+    assert "MRZ_MALFORMED" not in codes
+    assert not [c for c in codes if c.endswith("_CHECKSUM_FAIL")]
+    assert "MRZ_TAIL_UNREAD" in codes
+    tail = next(s for s in signals if s.code == "MRZ_TAIL_UNREAD")
+    assert tail.severity == "low"
+
+
+def test_dropped_tail_still_catches_a_disagreeing_digit_that_was_read():
+    # Document number checksum lives well before the dropped tail, so a real
+    # alteration there must still be caught even though the tail is unreadable.
+    bad_l2 = "U2938479<6UT09204155M3307319<<<<<<<<<<<<"
+    signals = mrz.run([SHORT_L1, bad_l2], {})
+    assert "MRZ_DOCNUM_CHECKSUM_FAIL" in [s.code for s in signals]
+
+
+def test_visa_optional_data_ending_in_a_letter_is_not_digit_coerced():
+    # ICAO 9303 Part 7: MRV line 2 positions 28-43 are alphanumeric optional data
+    # (the passport number the visa was issued against), not check digits.
+    visa_l2 = ("L898902C36UTO7408122F1204159" + "<" * 14 + "B<")
+    assert len(visa_l2) == 44
+    _, l2 = mrz.normalise_td3([L1, visa_l2], is_visa=True)
+    assert l2[42] == "B"   # trailing letter untouched, not coerced to a digit
+    _, l2_passport = mrz.normalise_td3([L1, visa_l2], is_visa=False)
+    assert l2_passport[42] == "8"   # same input, passport rules would coerce B -> 8
