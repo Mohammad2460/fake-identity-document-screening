@@ -43,6 +43,16 @@ _FIELDS = [
 ]
 
 
+_HUMAN_SOURCE = {"claimed": "the details typed into the form",
+                 "passport MRZ": "the passport",
+                 "visa MRZ": "the visa"}
+
+
+def _human(source: str | None) -> str:
+    """Plain-language name for a source, for the non-technical `plain` line."""
+    return _HUMAN_SOURCE.get(source or "", source or "another document")
+
+
 def run(sources: list[dict]) -> list[Signal]:
     usable = [src for src in sources if src]
     if len(usable) < 2:
@@ -61,7 +71,8 @@ def run(sources: list[dict]) -> list[Signal]:
                     message=(f"The {label} disagrees between documents: "
                              f"{a.get('source', 'unknown source')} says {a.get(key)!r}, "
                              f"{b.get('source', 'unknown source')} says {b.get(key)!r}."),
-                    plain=plain,
+                    plain=f"{plain} ({_human(a.get('source'))} vs "
+                          f"{_human(b.get('source'))})",
                     evidence={a.get("source", "unknown source"): a.get(key), b.get("source", "unknown source"): b.get(key)},
                 ))
 
@@ -73,7 +84,8 @@ def run(sources: list[dict]) -> list[Signal]:
                 message=(f"The date of birth disagrees between documents: "
                          f"{a.get('source', 'unknown source')} says {a.get('dob')!r}, "
                          f"{b.get('source', 'unknown source')} says {b.get('dob')!r}."),
-                plain="The date of birth is different on the two documents.",
+                plain=(f"The date of birth on {_human(a.get('source'))} does not "
+                       f"match {_human(b.get('source'))}."),
                 evidence={a.get("source", "unknown source"): a.get("dob"), b.get("source", "unknown source"): b.get("dob")},
             ))
 
@@ -84,7 +96,8 @@ def run(sources: list[dict]) -> list[Signal]:
                 code="XDOC_NAME_MISMATCH", engine="crossdoc", severity="high",
                 message=(f"The holder's name disagrees between documents: "
                          f"{a.get('source', 'unknown source')} says {na!r}, {b.get('source', 'unknown source')} says {nb!r}."),
-                plain=f"The name is different on the two documents: {na} vs {nb}.",
+                plain=(f"The name on {_human(a.get('source'))} ({na}) does not match "
+                       f"the name on {_human(b.get('source'))} ({nb})."),
                 evidence={a.get("source", "unknown source"): na, b.get("source", "unknown source"): nb},
             ))
 
