@@ -165,7 +165,9 @@ BASE = dict(surname="ERIKSSON", given="ANNA MARIA", doc_no="L898902C3",
             nat="UTO", dob="740812", sex="F", expiry="301231")
 ANNA = {"full_name": "Anna Maria Eriksson", "dob": "1974-08-12",
         "passport_no": "L898902C3", "nationality": "UTO",
-        "email": "anna.eriksson@gmail.com", "phone": "9845012763"}
+        # checkpoint-4 R11: @example.com (RFC 2606) so a demo contact detail is
+        # never a plausibly real address; see README for the invented-data note.
+        "email": "anna.eriksson@example.com", "phone": "9845012763"}
 
 def main() -> None:
     os.makedirs(OUT, exist_ok=True)

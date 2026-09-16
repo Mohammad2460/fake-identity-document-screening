@@ -18,15 +18,19 @@ like with like; thresholds sit above the worst genuine value measured.
 | Check | Measure | Genuine (worst) | Forged | Threshold |
 |---|---|---|---|---|
 | `TAMPER_ELA_ANOMALY` | luma ELA per unit edge energy, 16px textured blocks, vs document median (floor 0.005) | 6.5 (q95) | substituted photo 15.9, 3 contiguous blocks | > 8.0 in >= 2 contiguous blocks |
-| `TAMPER_COPY_MOVE` | ORB self-matches at one offset, off-axis (> 12px both axes), inside one 96px window spanning >= 24px both axes | 0 (was 15-25 before the layout filter) | cloned texture patch 13 | >= 12 |
+| `TAMPER_COPY_MOVE` | ORB self-matches at one offset, inside one 96px window, 2D-compact (>= 24px both axes) | 14 (axis-aligned; text row/column coincidences) | cloned texture patch 13 (off-axis); pure vertical/horizontal clone 31 | >= 12 off-axis, >= 20 axis-aligned |
 | `TAMPER_NOISE_INCONSISTENT` | p95 / median of MAD noise sigma on smooth (non-print) pixels, 6x6 tiles, floor 0.5 | 1.2 (was 12.6 with Laplacian variance) | pasted noisy camera photo 7.9; noisy splice on photo 4.1 | > 3.0 |
 | `FF_FIELD_TAMPERED` | per-field luma ELA, modified z within peer group (background shade; MRZ lines separate) | data fields z <= 1.6 | retyped DOB z 8.1, retyped surname z 8.1 | z > 3.5 (unchanged) |
 | `FF_STAMP_TAMPERED` | stamp judged on its OCR lettering, same measure as fields | genuine stamp lettering 0.63 (fields ~0.65) | added stamp lettering 2.42, z 10.8 | z > 3.5 (unchanged) |
 | `META_NO_CAMERA_EXIF` | absence of camera make/model | — | — | info only (scanned/issued images have none) |
 
-Limits: a clone moved purely along a row or column (within 12px of an axis) is not reported
-by `TAMPER_COPY_MOVE` — typeset layout repeats exactly that way. Whole-image ELA does not
-catch a single retyped field (DOB peak 4.3); `fieldforensics` owns that.
+Limits: whole-image ELA does not catch a single retyped field (DOB peak 4.3);
+`fieldforensics` owns that.
+
+All contact details (`email`, `phone`, `address`) on every scripted demo case and the
+stage specimen are invented; email addresses use `@example.com` (RFC 2606) so none is
+even plausibly a real address. `phone` keeps a valid-shaped number for the identity
+checks but is not a real number either.
 
 `face` (SFace cosine similarity, `SAME_PERSON = 0.363`, `DEFINITE_MISMATCH = 0.25`), measured
 on the committed SFHQ synthetic crops in `data/faces/`:

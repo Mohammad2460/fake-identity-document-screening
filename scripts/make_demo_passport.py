@@ -95,7 +95,8 @@ def claimed_details(name: str) -> dict:
             "dob": "19{}-{}-{}".format(DEMO_DOC["dob"][0:2], DEMO_DOC["dob"][2:4],
                                        DEMO_DOC["dob"][4:6]),
             "passport_no": DEMO_DOC["doc_no"], "nationality": DEMO_DOC["nat"],
-            "email": handle + "@gmail.com", "phone": "9845012763"}
+            # checkpoint-4 R11: @example.com (RFC 2606), never a plausibly real address.
+            "email": handle + "@example.com", "phone": "9845012763"}
 
 
 def build(photo: str, name: str, out_dir: str, forge_photo: str | None = None,

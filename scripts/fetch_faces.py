@@ -7,6 +7,7 @@ not exist. No other face source is permitted in this project.
 Run from the repo root:  ./.venv/bin/python -m scripts.fetch_faces
 """
 import os
+import shutil
 import tempfile
 import urllib.request
 import numpy as np
@@ -96,40 +97,44 @@ def main() -> None:
     from app.engines import face
     os.makedirs(OUT, exist_ok=True)
     work = tempfile.mkdtemp(prefix="sfhq_")
-    grid_path = os.path.join(work, "grid.jpg")
-    part = grid_path + ".part"
-    print(f"[get ] {GRID_URL}")
     try:
-        _download(GRID_URL, part)
-        os.replace(part, grid_path)
-    except Exception:
-        if os.path.exists(part):
-            os.remove(part)
-        raise
+        grid_path = os.path.join(work, "grid.jpg")
+        part = grid_path + ".part"
+        print(f"[get ] {GRID_URL}")
+        try:
+            _download(GRID_URL, part)
+            os.replace(part, grid_path)
+        except Exception:
+            if os.path.exists(part):
+                os.remove(part)
+            raise
 
-    with Image.open(grid_path) as im:
-        grid = im.convert("RGB")
-    kept = 0
-    for i, (x0, y0, x1, y1) in enumerate(grid_cells(grid)):
-        side = min(x1 - x0, y1 - y0)
-        cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
-        crop = grid.crop((cx - side // 2, cy - side // 2,
-                          cx - side // 2 + side, cy - side // 2 + side))
-        dest = os.path.join(OUT, f"sfhq_{i:02d}.jpg")
-        tmp = os.path.join(work, f"sfhq_{i:02d}.jpg")
-        crop.resize((SIZE, SIZE), Image.LANCZOS).save(tmp, "JPEG", quality=92)
-        n = len(face.detect_faces(tmp))
-        if n != 1:
-            print(f"[drop] cell {i}: {n} faces detected")
-            continue
-        os.replace(tmp, dest)
-        kept += 1
-        print(f"[ok  ] {dest}")
-    with open(os.path.join(OUT, "LICENSE-SFHQ.txt"), "w") as fh:
-        fh.write(LICENSE_TEXT.format(url=GRID_URL))
-    os.remove(grid_path)
-    os.rmdir(work) if not os.listdir(work) else None
-    print(f"Kept {kept} synthetic faces in {OUT}/")
+        with Image.open(grid_path) as im:
+            grid = im.convert("RGB")
+        kept = 0
+        for i, (x0, y0, x1, y1) in enumerate(grid_cells(grid)):
+            side = min(x1 - x0, y1 - y0)
+            cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+            crop = grid.crop((cx - side // 2, cy - side // 2,
+                              cx - side // 2 + side, cy - side // 2 + side))
+            dest = os.path.join(OUT, f"sfhq_{i:02d}.jpg")
+            tmp = os.path.join(work, f"sfhq_{i:02d}.jpg")
+            crop.resize((SIZE, SIZE), Image.LANCZOS).save(tmp, "JPEG", quality=92)
+            n = len(face.detect_faces(tmp))
+            if n != 1:
+                print(f"[drop] cell {i}: {n} faces detected")
+                continue
+            os.replace(tmp, dest)
+            kept += 1
+            print(f"[ok  ] {dest}")
+        with open(os.path.join(OUT, "LICENSE-SFHQ.txt"), "w") as fh:
+            fh.write(LICENSE_TEXT.format(url=GRID_URL))
+        print(f"Kept {kept} synthetic faces in {OUT}/")
+    finally:
+        # checkpoint-4 R10: the old cleanup (os.remove + a conditional os.rmdir)
+        # skipped whenever an exception was raised above, leaving the temp
+        # directory behind on every download or detection failure.
+        shutil.rmtree(work, ignore_errors=True)
 
 
 if __name__ == "__main__":
