@@ -31,9 +31,13 @@ Nothing about the *name* watchlist — every name source it screens (the typed n
 passport MRZ, the visa MRZ) is text a forger controls, and a cleanly forged passport in a
 name that was never listed passes all three. A face is different: it cannot be retyped.
 `app/engines/facewatch.py` compares the document portrait and the live selfie separately
-against a gallery of wanted people's faces (`data/face_watchlist.csv`), reusing the same
-SFace cosine threshold as the selfie-match engine (critical at 0.363, a "possible match —
-officer should check" band at 0.30). A document with a genuine page, a perfect MRZ, and a
+against a gallery of wanted people's faces (`data/face_watchlist.csv`). It uses a
+**stricter** threshold than the selfie-match engine — critical at 0.50, a "possible match —
+officer should check" band at 0.40 — because a gallery is 1:N identification rather than 1:1
+verification, and because we measured four pairs of *different* synthetic faces scoring at or
+above SFace's published 0.363 same-person threshold (worst 0.425). If a judge asks how we
+chose 0.50: from that measurement, which is in the README and re-run by the test suite.
+A document with a genuine page, a perfect MRZ, and a
 name on no list still comes back REJECT if the face is a match. The committed gallery is
 two SFHQ synthetic crops (`sfhq_05`, `sfhq_06`) — the mechanism is real, the gallery is a
 demonstration, not a production watchlist. A real deployment points `facewatch` at an

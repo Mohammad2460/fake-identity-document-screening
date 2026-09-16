@@ -101,12 +101,31 @@ on the committed SFHQ synthetic crops in `data/faces/`:
 | Same synthetic face vs. itself resized + re-saved as JPEG q80 | 0.934 |
 | Two different synthetic faces (`sfhq_01` vs `sfhq_02`) | 0.163 (below `DEFINITE_MISMATCH`) |
 
-`facewatch` reuses these same thresholds (`FACE_WL_MATCH = SAME_PERSON = 0.363`,
-`FACE_WL_POSSIBLE = 0.30`) against a small gallery of SFHQ crops (`data/face_watchlist.csv`:
-`sfhq_05`, `sfhq_06`). Measured cross-similarities among the gallery faces and the other
-committed SFHQ crops used elsewhere (samples, demo builder, liveness) were all well below
-0.30 (highest observed 0.207), so nothing already in the repo accidentally triggers the
-gallery.
+`facewatch` deliberately does **not** reuse those thresholds. `SAME_PERSON = 0.363` is
+published for 1:1 verification — one claimed identity, one comparison. A gallery is 1:N
+identification, where every additional entry is another chance to match the wrong person,
+so the false-match probability grows with the gallery while the threshold does not.
+
+We also measured it. Across all 28 pairs of the 8 committed SFHQ crops — every pair a
+**different** non-existent person — four scored at or above 0.363:
+
+| Pair (different people) | Cosine |
+|---|---|
+| `sfhq_04` vs `sfhq_07` | 0.425 |
+| `sfhq_00` vs `sfhq_04` | 0.417 |
+| `sfhq_03` vs `sfhq_07` | 0.376 |
+| `sfhq_00` vs `sfhq_06` | 0.372 |
+
+These are StyleGAN faces from one generator and are more alike than a random sample of real
+people would be, but the measurement is ours and it says 0.363 is not a safe operating point
+for a gallery. `facewatch` therefore uses `FACE_WL_MATCH = 0.50` and `FACE_WL_POSSIBLE = 0.40`
+— clear of the worst impostor pair we measured (0.425), far below a genuine match (0.934).
+`tests/test_facewatch.py::test_no_two_distinct_faces_reach_the_gallery_threshold` re-measures
+this and fails if it ever stops holding.
+
+The committed gallery is `data/face_watchlist.csv` (`sfhq_05`, `sfhq_06`); a second test
+asserts no gallery face is reused as a demo portrait, since that would make its holder's own
+genuine passport self-match.
 
 `liveness` (challenge-response head turn, `YAW_DELTA_THRESHOLD = 0.045`). The measure is the
 yaw proxy — `(nose_x − eye_midpoint_x) / inter-eye distance`, so it is scale-invariant — and

@@ -140,3 +140,52 @@ def test_engine_failure_becomes_signal_not_exception(gallery_csv, tmp_path, monk
     inp = ScreeningInput(claimed={"full_name": "Someone Else"}, doc_path=GALLERY_FACE)
     result = pipeline.screen(inp, db_path=db_path)
     assert result.band in ("CLEAR", "REVIEW", "REJECT")
+
+
+# --- What the gallery threshold is actually built on -------------------------
+
+def _all_crops():
+    import glob
+    return sorted(glob.glob(os.path.join(FACES_DIR, "sfhq_*.jpg")))
+
+
+@no_gallery_data
+def test_no_two_distinct_faces_reach_the_gallery_threshold():
+    """Every SFHQ crop is a different non-existent person, so no pair may reach
+    FACE_WL_MATCH. This is the measurement the threshold is chosen from: four of
+    the 28 pairs score at or above face.SAME_PERSON (0.363), the worst at 0.425,
+    which is why the gallery does not use that threshold."""
+    import itertools
+    embeddings = {p: facewatch._embedding(p) for p in _all_crops()}
+    pairs = [(facewatch._score(embeddings[a], embeddings[b]), a, b)
+             for a, b in itertools.combinations(sorted(embeddings), 2)
+             if embeddings[a] is not None and embeddings[b] is not None]
+    assert pairs, "no crops available to measure"
+    worst, a, b = max(pairs)
+    assert worst < facewatch.FACE_WL_MATCH, (
+        f"{a} and {b} are different people but score {worst:.3f}, at or above "
+        f"the gallery match threshold {facewatch.FACE_WL_MATCH}")
+    assert worst <= facewatch.MEASURED_IMPOSTOR_MAX + 0.01, (
+        f"impostor similarity rose to {worst:.3f}; MEASURED_IMPOSTOR_MAX and the "
+        f"numbers quoted in README/JUDGE_QA are stale")
+
+
+@no_gallery_data
+def test_gallery_faces_are_not_reused_anywhere_else_in_the_repo():
+    """A crop used as a demo holder's portrait must never also sit in the
+    gallery: that person's own genuine passport would then self-match and
+    REJECT. This happened once during task 23."""
+    gallery_files = {row["file"] for row in facewatch.load_gallery()}
+    assert gallery_files, "the committed gallery is empty"
+    import subprocess
+    for path in sorted(gallery_files):
+        name = os.path.basename(path)
+        hits = subprocess.run(
+            ["grep", "-rl", "--include=*.py", "--include=*.csv", "--include=*.md",
+             name, "tests", "scripts", "app", "data", "docs"],
+            capture_output=True, text=True).stdout.split()
+        unexpected = [h for h in hits
+                      if h not in ("tests/test_facewatch.py", "data/face_watchlist.csv")]
+        assert not unexpected, (
+            f"{name} is in the wanted-face gallery but is also used by "
+            f"{unexpected} - a demo portrait must never be a gallery face")

@@ -16,10 +16,35 @@ from app.models import Signal
 
 GALLERY_PATH = "data/face_watchlist.csv"
 
-FACE_WL_MATCH = face.SAME_PERSON      # 0.363, OpenCV's published SFace cosine threshold
-FACE_WL_POSSIBLE = 0.30
+# Stricter than face.SAME_PERSON (0.363), and deliberately so.
+#
+# That threshold is published for 1:1 verification - one claimed identity, one
+# comparison. A gallery is 1:N identification: every extra entry is another
+# chance to match the wrong person, so the false-match probability grows with
+# the gallery while the threshold does not. Standard biometric practice is a
+# stricter operating point for identification than for verification.
+#
+# We also measured it. Across the 28 pairs of our 8 SFHQ crops - every pair a
+# DIFFERENT non-existent person - four scored at or above 0.363, the highest at
+# 0.425 (see tests/test_facewatch.py::test_no_two_distinct_faces_reach_the_
+# gallery_threshold). These are StyleGAN faces from one generator and are more
+# alike than a random sample of real people would be, but the measurement is
+# ours and it says 0.363 is not a safe operating point for a gallery.
+#
+# 0.50 clears our worst measured impostor pair by a wide margin and sits far
+# below a genuine match (same face, resized and re-encoded: 0.9342).
+FACE_WL_MATCH = 0.50
+FACE_WL_POSSIBLE = 0.40
 
-_EMBED_CACHE: dict[tuple, "np.ndarray"] = {}
+# The highest similarity we have measured between two different people. Tests
+# assert the gallery keeps clear of it; quoted in README and JUDGE_QA.
+MEASURED_IMPOSTOR_MAX = 0.425
+
+# Gallery embeddings only. A traveller's document and selfie are uploaded to
+# uuid-named files that are deleted after the screening, so caching them would
+# grow this dict once per screening and never release it.
+_GALLERY_EMBED_CACHE: dict[tuple, object] = {}
+_GALLERY_EMBED_CACHE_MAX = 256
 
 
 def _read(path: str) -> list[dict]:
@@ -51,21 +76,37 @@ def load_gallery(path: str = GALLERY_PATH) -> tuple:
     return _load_rows(path, _mtime(path), overlay, _mtime(overlay))
 
 
-def _embedding(image_path: str):
+def _embedding(image_path: str, cache: bool = False):
     """One face embedding for an image, or None if it can't be produced.
-    Cached on (path, mtime) so repeated screenings against the same gallery
-    row don't re-run the recognizer every time."""
+
+    Gallery rows pass cache=True and are keyed on (path, mtime), so editing a
+    gallery image is picked up and repeated screenings don't re-run the
+    recognizer over the whole gallery every time.
+    """
     key = (image_path, _mtime(image_path))
-    if key in _EMBED_CACHE:
-        return _EMBED_CACHE[key]
+    if cache and key in _GALLERY_EMBED_CACHE:
+        return _GALLERY_EMBED_CACHE[key]
     faces = face.detect_faces(image_path)
     if not faces:
-        _EMBED_CACHE[key] = None
-        return None
-    biggest = max(faces, key=lambda f: f["box"][2] * f["box"][3])
-    emb = face._embedding(image_path, biggest["raw"])
-    _EMBED_CACHE[key] = emb
+        emb = None
+    else:
+        biggest = max(faces, key=lambda f: f["box"][2] * f["box"][3])
+        emb = face._embedding(image_path, biggest["raw"])
+    if cache:
+        if len(_GALLERY_EMBED_CACHE) >= _GALLERY_EMBED_CACHE_MAX:
+            _GALLERY_EMBED_CACHE.clear()
+        _GALLERY_EMBED_CACHE[key] = emb
     return emb
+
+
+_PLAIN_SOURCE = {"the document portrait": "the photograph on the document",
+                 "the selfie": "the live selfie"}
+
+
+def _plain_sources(labels: list[str]) -> str:
+    """Plain-language phrase naming which picture(s) matched."""
+    worded = [_PLAIN_SOURCE.get(l, l) for l in labels]
+    return worded[0] if len(worded) == 1 else " and ".join(worded)
 
 
 def _score(a, b) -> float:
@@ -105,7 +146,7 @@ def run(doc_path: str | None, selfie_path: str | None,
     for row in rows:
         img_path = row.get("file", "")
         try:
-            gallery_emb = _embedding(img_path)
+            gallery_emb = _embedding(img_path, cache=True)
         except Exception:
             gallery_emb = None
         if gallery_emb is None:
@@ -126,7 +167,9 @@ def run(doc_path: str | None, selfie_path: str | None,
             best_overall = (row_best, row)
 
         if row_labels:
-            name = row["name"]
+            name = (row.get("name") or "").strip()
+            if not name:
+                continue
             entry = per_person.setdefault(name, {"row": row, "best": 0.0, "labels": []})
             for label, score in row_labels:
                 if label not in [l for l, _ in entry["labels"]]:
@@ -161,8 +204,8 @@ def run(doc_path: str | None, selfie_path: str | None,
                 message=(f"{source_phrase} matches {name!r} on the {row['list']} "
                          f"wanted-face list ({row.get('reason', '')}) at similarity "
                          f"{best:.2f} (threshold {FACE_WL_MATCH})."),
-                plain=(f"The person in the passport photograph appears on the "
-                       f"wanted list as {name}."),
+                plain=(f"The face in {_plain_sources(labels)} is on the wanted "
+                       f"list as {name}."),
                 evidence=ev,
             ))
         else:
@@ -170,9 +213,10 @@ def run(doc_path: str | None, selfie_path: str | None,
                 code="FACE_WL_POSSIBLE", engine="facewatch", severity="medium",
                 message=(f"{source_phrase} looks similar ({best:.2f}) to {name!r} on "
                          f"the {row['list']} wanted-face list, below the {FACE_WL_MATCH} "
-                         f"same-person threshold. Manual review required."),
-                plain=(f"The photograph looks similar to {name} on the wanted "
-                       f"list. An officer should check."),
+                         f"match threshold. Manual review required."),
+                plain=(f"The face in {_plain_sources(labels)} looks similar to "
+                       f"{name} on the wanted list, but not close enough to be "
+                       f"sure. An officer should check."),
                 evidence=ev,
             ))
 

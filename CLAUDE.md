@@ -110,9 +110,15 @@ Storage is three things, only one of them a database: sample images are **files 
   photo bent around a curve, passes. Its threshold is calibrated on synthetic warps, not recorded humans.
 - No passive/bank-grade anti-spoofing, no deepfake/GAN-face detection, no live government API
   integration. All named as future work.
-- `facewatch`'s thresholds reuse SFace's published cosine same-person threshold (0.363); we have
-  not independently validated it. The committed gallery is a handful of SFHQ synthetic faces — it
+- `facewatch` matches at 0.50, stricter than SFace's published 0.363 same-person threshold,
+  because a gallery is 1:N identification and because we measured four pairs of *different*
+  SFHQ faces at or above 0.363 (worst 0.425). That measurement is on 8 StyleGAN faces from one
+  generator, not on real people. The committed gallery is a handful of synthetic faces — it
   demonstrates the mechanism, not a measured detection rate.
+- The same measurement is a caution about `face`'s selfie matching, which still uses 0.363: on
+  our synthetic set, two different people can exceed it. Not changed, because we have no
+  measurement of genuine selfie-to-portrait pairs to move it against — recorded here so nobody
+  quotes 0.363 to a judge as if it were validated.
 - Accuracy is quoted only against SIDTD, never invented.
 
 ## Git and GitHub
