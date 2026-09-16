@@ -14,7 +14,14 @@ ELA_RATIO_FLOOR = 0.005   # residual-per-edge floor; idempotent re-saves have me
 ELA_SUSPICIOUS = 8.0      # block residual-per-edge vs document median (clean max 6.5)
 ELA_MIN_BLOCKS = 2        # a splice is a contiguous area, not one 16px block
 CLONE_MATCH_MIN = 12      # self-matches with one consistent offset, in one compact area
-CLONE_LAYOUT_TOL = 12     # px; offsets this close to an axis are typeset rows/columns
+# An axis-aligned offset (dx=0 or dy=0) is both the PS's own attack (a stamp
+# cloned straight across or down) AND the shape typeset repeats coincidentally
+# fall into at low counts (measured on clean genuine renders: up to 14 matches
+# in one 2D-spread cluster at an exact axis offset). A real clone at that same
+# axis, measured on a synthetic pasted patch, produces far more (31). The
+# higher floor only applies on this axis; a diagonal offset uses CLONE_MATCH_MIN.
+CLONE_MATCH_MIN_AXIS = 20
+CLONE_AXIS_TOL = 1        # rounded offset units (d/8); 0-1 counts as "on the axis"
 CLONE_WINDOW = 96         # px; a cloned region's matches sit within one window
 CLONE_MIN_EXTENT = 24     # px; ...and span 2D, not one text line or one column
 NOISE_EDGE = 100.0        # blurred edge energy above which a pixel is print, not noise
@@ -126,21 +133,33 @@ def copy_move_score(path: str) -> tuple[float, int]:
             d = p1 - p2
             if np.linalg.norm(d) <= 40 or m.distance >= 40:
                 continue                          # near itself, or not visually identical
-            if min(abs(d[0]), abs(d[1])) <= CLONE_LAYOUT_TOL:
-                continue                          # same row or column: typeset layout
+            # checkpoint-4 R3: the axis test used to run per-pair, on the offset
+            # alone, which drops the PS's own attack - a stamp cloned straight
+            # across or down. It is applied below, per candidate cluster,
+            # against the matched keypoints' own spread instead - a text row
+            # is thin across its line even though it runs the length of the
+            # line; a pasted stamp is compact in both directions.
             groups.setdefault(tuple(np.round(d / 8).astype(int)), []).append(p2)
 
     best = 0
     half = CLONE_WINDOW / 2
-    for pts in groups.values():
-        if len(pts) <= best:
+    for d_key, pts in groups.items():
+        floor = (CLONE_MATCH_MIN_AXIS if min(abs(d_key[0]), abs(d_key[1])) <= CLONE_AXIS_TOL
+                 else CLONE_MATCH_MIN)
+        if len(pts) < floor:
             continue
         arr = np.asarray(pts)
         for c in arr:
             sel = arr[(np.abs(arr[:, 0] - c[0]) <= half) & (np.abs(arr[:, 1] - c[1]) <= half)]
-            if (len(sel) > best and np.ptp(sel[:, 0]) >= CLONE_MIN_EXTENT
-                    and np.ptp(sel[:, 1]) >= CLONE_MIN_EXTENT):
-                best = len(sel)
+            if len(sel) <= best or len(sel) < floor:
+                continue
+            # A 2D-compact cluster (both extents wide) is never a typeset row or
+            # column - a text line runs long but sits in a narrow band across
+            # it, so it fails this test regardless of its offset's axis. A
+            # pasted region, even at a pure vertical/horizontal offset, passes.
+            if np.ptp(sel[:, 0]) < CLONE_MIN_EXTENT or np.ptp(sel[:, 1]) < CLONE_MIN_EXTENT:
+                continue
+            best = len(sel)
     return best / max(len(kp), 1) * 100, best
 
 def noise_spread(path: str) -> float:

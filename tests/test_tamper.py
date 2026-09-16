@@ -112,6 +112,23 @@ def test_layout_aligned_glyph_repeats_are_not_copy_move(tmp_path):
     assert matches < tamper.CLONE_MATCH_MIN
 
 
+# --- checkpoint-4 R3: the PS's own attack (a stamp cloned along a pure axis) --
+def test_stamp_cloned_at_a_pure_vertical_offset_is_detected(tmp_path):
+    """The old per-pair axis filter dropped ANY axis-aligned offset, including
+    this one - a compact blob copy-pasted straight down the page, with no
+    horizontal shift at all, which is exactly how a border officer's stamp
+    forgery would be pasted (stamps and seals sit in fixed columns)."""
+    rng = np.random.default_rng(3)
+    tex = rng.integers(0, 255, (320, 320, 3), dtype=np.uint8)
+    tex = cv2.GaussianBlur(tex, (3, 3), 0)
+    cloned = tex.copy()
+    cloned[200:290, 100:190] = tex[10:100, 100:190]   # dy=190, dx=0: pure vertical clone
+    p = str(tmp_path / "vertical_clone.jpg")
+    Image.fromarray(cloned).save(p, "JPEG", quality=95)
+    _, matches = tamper.copy_move_score(p)
+    assert matches >= tamper.CLONE_MATCH_MIN_AXIS
+
+
 def test_substituted_photo_on_document_raises_ela_anomaly(tmp_path):
     """Sample case 04: a different person's photo pasted in after issue, re-saved at q97."""
     p = str(tmp_path / "04.jpg")
